@@ -461,3 +461,41 @@ source ~/fairino_ws/install/setup.bash
 source ~/fr_task_ws/install/setup.bash
 python3 ~/fr_task_ws/src/fr_task_planner/launch/stage9a_multi_run_search.py
 ```
+
+# STEP 10 — Inspection Roll / Endpoint Candidate Generation
+
+```text
+STEP 10
+
+Purpose:
+one Inspection View → many D1-roll Cartesian poses → many collision-checked IK endpoint states.
+
+Hard:
+view center = P1
+view normal = D1
+
+Soft:
+preferred up (recorded, not a rejection gate)
+
+Default:
+roll_step_deg=30 → 12 unique poses/view
+max_ik_solutions_per_pose=8
+min_ik_solution_distance=0.1 rad
+
+Same Lift attached scene for every roll / IK candidate.
+No Lift→View path.
+No 6-order search.
+No motion-time ranking.
+No execution.
+```
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+python3 -m unittest \
+  ~/fr_task_ws/src/fr_task_planner/test/test_inspection_view_geometry.py \
+  ~/fr_task_ws/src/fr_task_planner/test/test_inspection_roll_candidates.py
+ros2 launch fr_task_planner mtc_fr3_roll_candidate_test.launch.py
+python3 ~/fr_task_ws/src/fr_task_planner/launch/stage10_roll_candidates.py
+```

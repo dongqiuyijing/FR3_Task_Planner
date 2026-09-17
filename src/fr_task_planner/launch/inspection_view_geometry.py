@@ -20,9 +20,13 @@ from fr_control.grasp_poses import (
     pose_inverse,
     pose_multiply,
 )
+from fr_control.grasp_poses import quat_to_matrix, quat_xyzw
 from fr_control.inspection_poses import (
     InspectionError,
     as_vec3,
+    matrix_to_xyzw,
+    quat_angle_deg,
+    quat_normalize,
     rotation_mapping_axes,
     rotate_pose_vector,
     tcp_pose_from_object,
@@ -327,6 +331,161 @@ def compute_view_target(
         canonical_up_error_deg=angle_between_deg(up, inspection_up),
         object_center_offset_m=vec_norm(vec_sub(object_center, p1)),
     )
+
+
+def canonicalize_roll_deg(angle_deg: float) -> float:
+    """Map an angle to (-180, 180]. +180 is kept; -180 becomes +180."""
+    wrapped = (float(angle_deg) + 180.0) % 360.0 - 180.0
+    if abs(wrapped + 180.0) < 1e-9:
+        return 180.0
+    if abs(wrapped) < 1e-12:
+        return 0.0
+    return wrapped
+
+
+def roll_sample_degrees(roll_step_deg: float) -> list[float]:
+    """Deterministic roll grid. 0 first, then +step, -step, ..., 180."""
+    step = float(roll_step_deg)
+    if step <= 0.0 or step > 180.0:
+        raise InspectionViewError(
+            f"roll_step_deg must satisfy 0 < step <= 180, got {step}"
+        )
+    n = 360.0 / step
+    if abs(n - round(n)) > 1e-9:
+        raise InspectionViewError(
+            f"360 / roll_step_deg must be an integer, got 360/{step}={n}"
+        )
+    count = int(round(n))
+    ordered: list[float] = [0.0]
+    k = 1
+    while True:
+        pos = canonicalize_roll_deg(k * step)
+        if abs(pos - 180.0) < 1e-9 or pos < 0.0:
+            if 180.0 not in ordered:
+                ordered.append(180.0)
+            break
+        neg = canonicalize_roll_deg(-k * step)
+        if pos not in ordered:
+            ordered.append(pos)
+        if neg not in ordered and abs(neg - pos) > 1e-9:
+            ordered.append(neg)
+        if len(ordered) >= count:
+            break
+        k += 1
+    if len(ordered) != count:
+        raise InspectionViewError(
+            f"roll grid size {len(ordered)} != expected {count}"
+        )
+    return ordered
+
+
+def _matmul(
+    left: Sequence[Sequence[float]], right: Sequence[Sequence[float]]
+) -> tuple[tuple[float, float, float], ...]:
+    return tuple(
+        tuple(
+            left[i][0] * right[0][j]
+            + left[i][1] * right[1][j]
+            + left[i][2] * right[2][j]
+            for j in range(3)
+        )
+        for i in range(3)
+    )
+
+
+def rotation_about_axis(
+    axis: Sequence[float], angle_deg: float
+) -> tuple[tuple[float, float, float], ...]:
+    """Rodrigues rotation about a unit axis, in the reference frame."""
+    axis_u = vec_normalize(axis, "roll axis")
+    rad = math.radians(float(angle_deg))
+    c = math.cos(rad)
+    s = math.sin(rad)
+    x, y, z = axis_u
+    return (
+        (c + x * x * (1.0 - c), x * y * (1.0 - c) - z * s, x * z * (1.0 - c) + y * s),
+        (y * x * (1.0 - c) + z * s, c + y * y * (1.0 - c), y * z * (1.0 - c) - x * s),
+        (z * x * (1.0 - c) - y * s, z * y * (1.0 - c) + x * s, c + z * z * (1.0 - c)),
+    )
+
+
+@dataclass(frozen=True)
+class InspectionRollCandidate:
+    """One deterministic roll pose. up_error is a soft diagnostic."""
+
+    view: InspectionView
+    roll_deg: float
+    pose_index: int
+    frame: str
+    object_pose: Pose
+    tcp_pose: Pose
+    view_center_error_m: float
+    normal_angle_error_deg: float
+    up_error_deg: float
+
+
+def generate_roll_candidates(
+    target: InspectionViewTarget,
+    tcp_t_object: Pose,
+    roll_step_deg: float = 30.0,
+) -> list[InspectionRollCandidate]:
+    """Enumerate unique roll poses around D1. roll=0 is the STEP 6 canonical."""
+    angles = roll_sample_degrees(roll_step_deg)
+    r_canonical = quat_to_matrix(quat_xyzw(target.object_pose.orientation))
+    out: list[InspectionRollCandidate] = []
+    seen: list[tuple[tuple[float, float, float], tuple[float, float, float, float]]] = []
+    for index, raw_deg in enumerate(angles):
+        roll_deg = canonicalize_roll_deg(raw_deg)
+        r_roll = _matmul(rotation_about_axis(target.inspection_direction, roll_deg), r_canonical)
+        xyzw = quat_normalize(matrix_to_xyzw(r_roll))
+        object_pose = object_pose_for_inspection_view(
+            target.p1,
+            center_in_object=target.view.center_in_object,
+            normal_in_object=target.view.normal_in_object,
+            up_in_object=target.view.up_in_object,
+            inspection_direction=target.inspection_direction,
+            inspection_up=target.inspection_up,
+            orientation_xyzw=xyzw,
+        )
+        tcp_pose = tcp_target_from_object(object_pose, tcp_t_object)
+        pos = (
+            round(object_pose.position.x, 9),
+            round(object_pose.position.y, 9),
+            round(object_pose.position.z, 9),
+        )
+        q = quat_normalize(quat_xyzw(object_pose.orientation))
+        # Treat q and -q as the same orientation.
+        q_flip = tuple(round(-v, 9) for v in q)
+        q_flip = quat_normalize(q_flip)
+        duplicate = False
+        for prev_pos, prev_q in seen:
+            if prev_pos != pos:
+                continue
+            same = all(abs(a - b) < 1e-9 for a, b in zip(q, prev_q))
+            flipped = all(abs(a - b) < 1e-9 for a, b in zip(q_flip, prev_q))
+            if same or flipped:
+                duplicate = True
+                break
+        if duplicate:
+            continue
+        seen.append((pos, q))
+        center = actual_view_center(object_pose, target.view.center_in_object)
+        normal = actual_view_normal(object_pose, target.view.normal_in_object)
+        up = actual_view_up(object_pose, target.view.up_in_object)
+        out.append(
+            InspectionRollCandidate(
+                view=target.view,
+                roll_deg=roll_deg,
+                pose_index=len(out),
+                frame=target.frame,
+                object_pose=object_pose,
+                tcp_pose=tcp_pose,
+                view_center_error_m=vec_norm(vec_sub(center, target.p1)),
+                normal_angle_error_deg=angle_between_deg(normal, target.inspection_direction),
+                up_error_deg=angle_between_deg(up, target.inspection_up),
+            )
+        )
+    return out
 
 
 def load_stage6_geometry(config_file: str | None = None) -> dict[str, Any]:
