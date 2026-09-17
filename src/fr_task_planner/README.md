@@ -367,3 +367,36 @@ ros2 launch fr_task_planner mtc_fr3_inspection_view_test.launch.py view_name:=si
 ros2 launch fr_task_planner mtc_fr3_inspection_view_test.launch.py view_name:=side_neg_y
 ros2 launch fr_task_planner mtc_fr3_inspection_view_test.launch.py view_name:=top_circle
 ```
+
+# STEP 8 — Pairwise Inspection View Transition Feasibility
+
+```text
+Goal:
+pairwise canonical inspection transition feasibility
+
+Directed edges:
+6
+
+Full prefix included:
+YES
+
+Order optimization:
+NO
+
+Roll sampling:
+NO
+
+Execution:
+NO
+```
+
+Plan-only. One complete Home→…→source→target Task per directed edge.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_task_planner mtc_fr3_view_transition_test.launch.py \
+  source_view:=side_pos_y target_view:=side_neg_y
+python3 ~/fr_task_ws/src/fr_task_planner/launch/stage8_transition_matrix.py
+```
