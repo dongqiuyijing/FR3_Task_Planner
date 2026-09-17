@@ -652,8 +652,8 @@ void validateCandidate(EndpointCandidate& cand, const planning_scene::PlanningSc
                        const moveit::core::RobotModelConstPtr& robot_model, const std::string& group,
                        const std::string& ee_link, const std::string& object_id,
                        const std::string& table_name, const std::vector<std::string>& touch_links,
-                       const Eigen::Isometry3d& t_tcp_object, const ViewGeom& view,
-                       const Eigen::Vector3d& p1, const Eigen::Vector3d& d1,
+                       const Eigen::Isometry3d& t_tcp_object, const Eigen::Isometry3d& t_model_base,
+                       const ViewGeom& view, const Eigen::Vector3d& p1, const Eigen::Vector3d& d1,
                        const Eigen::Vector3d& preferred_up, const std::map<std::string, double>& q_lift,
                        double pos_tol, double ori_tol_deg)
 {
@@ -663,11 +663,12 @@ void validateCandidate(EndpointCandidate& cand, const planning_scene::PlanningSc
   applyJoints(fk, cand.joints);
   cand.bounds_ok = static_cast<bool>(jmg) && fk.satisfiesBounds(jmg);
   const Eigen::Isometry3d actual_tcp = tcpInBase(fk, ee_link);
-  const Eigen::Isometry3d actual_object = actual_tcp * t_tcp_object;
+  const Eigen::Isometry3d actual_object_world = t_model_base * actual_tcp * t_tcp_object;
   const Eigen::Vector3d actual_center =
-      actual_object.translation() + actual_object.linear() * view.center_in_object;
-  const Eigen::Vector3d actual_normal = (actual_object.linear() * view.normal_in_object).normalized();
-  const Eigen::Vector3d actual_up = (actual_object.linear() * view.up_in_object).normalized();
+      actual_object_world.translation() + actual_object_world.linear() * view.center_in_object;
+  const Eigen::Vector3d actual_normal =
+      (actual_object_world.linear() * view.normal_in_object).normalized();
+  const Eigen::Vector3d actual_up = (actual_object_world.linear() * view.up_in_object).normalized();
   cand.view_center_error = (actual_center - p1).norm();
   cand.normal_error =
       std::acos(std::min(1.0, std::max(-1.0, actual_normal.dot(d1.normalized())))) * 180.0 / M_PI;
@@ -964,7 +965,9 @@ int main(int argc, char** argv)
   const auto lift = readPose(node, "lift");
   const auto object_world = readPose(node, "object_world");
   const auto object_base = readPose(node, "object");
+  const auto world_base = readPose(node, "world_base");
   const auto tcp_object = readPose(node, "tcp_object");
+  const Eigen::Isometry3d t_world_base = poseToIso(world_base.pose);
   const Eigen::Vector3d p1(getDouble(node, "p1_x"), getDouble(node, "p1_y"), getDouble(node, "p1_z"));
   const Eigen::Vector3d d1 =
       Eigen::Vector3d(getDouble(node, "d1_x"), getDouble(node, "d1_y"), getDouble(node, "d1_z"))
@@ -1083,8 +1086,10 @@ int main(int argc, char** argv)
       return 1;
     }
     const Eigen::Isometry3d t_obj = poseToIso(roll.object.pose);
-    const Eigen::Vector3d center = t_obj.translation() + t_obj.linear() * view->center_in_object;
-    const Eigen::Vector3d normal = (t_obj.linear() * view->normal_in_object).normalized();
+    const Eigen::Isometry3d t_obj_world = t_world_base * t_obj;
+    const Eigen::Vector3d center =
+        t_obj_world.translation() + t_obj_world.linear() * view->center_in_object;
+    const Eigen::Vector3d normal = (t_obj_world.linear() * view->normal_in_object).normalized();
     const double center_err = (center - p1).norm();
     const double normal_err =
         std::acos(std::min(1.0, std::max(-1.0, normal.dot(d1)))) * 180.0 / M_PI;
@@ -1307,8 +1312,8 @@ int main(int argc, char** argv)
       continue;
     }
     validateCandidate(cand, *lift_scene, robot_model, group, ee_link, object_id, table_name,
-                      touch_links, t_tcp_object, *view, p1, d1, preferred_up, q_lift, pos_tol,
-                      ori_tol_deg);
+                      touch_links, t_tcp_object, t_model_base, *view, p1, d1, preferred_up, q_lift,
+                      pos_tol, ori_tol_deg);
     validated.push_back(cand);
     RCLCPP_INFO(node->get_logger(),
                 "candidate %s roll=%.1f ik=%d valid=%s reason=%s joints=%.3f %.3f %.3f %.3f %.3f "

@@ -1277,10 +1277,12 @@ int main(int argc, char** argv)
 
   applyJoints(fk_state, inspect_seg.points.back());
   const Eigen::Isometry3d actual_tcp = tcpInBase(fk_state, ee_link);
+  const Eigen::Isometry3d actual_tcp_world = tcpInWorld(fk_state, ee_link, model_frame, t_world_base);
   const Eigen::Isometry3d t_inspect_tcp = poseToIso(inspect.pose);
   const Eigen::Isometry3d t_inspect_obj = poseToIso(inspect_object.pose);
   const Eigen::Isometry3d t_tcp_obj = poseToIso(tcp_object.pose);
   const Eigen::Isometry3d actual_object = actual_tcp * t_tcp_obj;
+  const Eigen::Isometry3d actual_object_world = actual_tcp_world * t_tcp_obj;
   double inspect_tcp_pos = 0.0;
   double inspect_tcp_ori = 0.0;
   double inspect_obj_pos = 0.0;
@@ -1288,9 +1290,10 @@ int main(int argc, char** argv)
   poseError(t_inspect_tcp, actual_tcp, inspect_tcp_pos, inspect_tcp_ori);
   poseError(t_inspect_obj, actual_object, inspect_obj_pos, inspect_obj_ori);
   const Eigen::Vector3d actual_center =
-      actual_object.translation() + actual_object.linear() * center_in_object;
-  const Eigen::Vector3d actual_normal = (actual_object.linear() * normal_in_object).normalized();
-  const Eigen::Vector3d actual_up = (actual_object.linear() * up_in_object).normalized();
+      actual_object_world.translation() + actual_object_world.linear() * center_in_object;
+  const Eigen::Vector3d actual_normal =
+      (actual_object_world.linear() * normal_in_object).normalized();
+  const Eigen::Vector3d actual_up = (actual_object_world.linear() * up_in_object).normalized();
   const double view_center_err = (actual_center - p1).norm();
   const double normal_err_deg =
       std::acos(std::min(1.0, std::max(-1.0, actual_normal.dot(d1)))) * 180.0 / M_PI;
@@ -1393,9 +1396,9 @@ int main(int argc, char** argv)
               inspect_tcp_pos, inspect_tcp_ori);
   RCLCPP_INFO(node->get_logger(), "Object endpoint error: position=%.6f m orientation=%.6f deg",
               inspect_obj_pos, inspect_obj_ori);
-  RCLCPP_INFO(node->get_logger(), "View-center error: %.6f m", view_center_err);
-  RCLCPP_INFO(node->get_logger(), "Normal error: %.6f deg", normal_err_deg);
-  RCLCPP_INFO(node->get_logger(), "Canonical-up error: %.6f deg", up_err_deg);
+  RCLCPP_INFO(node->get_logger(), "P1_world error: %.6f m", view_center_err);
+  RCLCPP_INFO(node->get_logger(), "D1_world error: %.6f deg", normal_err_deg);
+  RCLCPP_INFO(node->get_logger(), "canonical up_world error: %.6f deg", up_err_deg);
   logContacts(node->get_logger(), "Illegal trajectory collision states:", inspect_illegal_all);
   RCLCPP_INFO(node->get_logger(), "Joint-bounds violations: %zu", inspect_bound_violations);
 

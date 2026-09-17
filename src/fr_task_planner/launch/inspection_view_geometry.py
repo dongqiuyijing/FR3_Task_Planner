@@ -53,6 +53,8 @@ _RADIAL_Z_ABS_MAX = 1e-6
 _CAP_Z_ABS_MIN = 1.0 - 1e-6
 _CENTER_TOL_M = 1e-6
 _ANGLE_TOL_DEG = 1e-6
+_ORTHO_DOT_TOL = 1e-6
+_UNIT_NORM_TOL = 1e-9
 
 
 @dataclass(frozen=True)
@@ -91,6 +93,156 @@ def vec_add(
         float(left[1]) + float(right[1]),
         float(left[2]) + float(right[2]),
     )
+
+
+def identity_pose() -> Pose:
+    """Return a Pose with zero translation and identity rotation."""
+    return make_pose((0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0))
+
+
+def transform_point(point: Sequence[float], transform: Pose) -> tuple[float, float, float]:
+    """Apply rotation + translation: R*p + t."""
+    rotated = rotate_pose_vector(transform, point)
+    return vec_add(
+        (transform.position.x, transform.position.y, transform.position.z),
+        rotated,
+    )
+
+
+def transform_vector(
+    vector: Sequence[float], transform: Pose
+) -> tuple[float, float, float]:
+    """Apply rotation only. Do not add translation (for D1 / up)."""
+    return rotate_pose_vector(transform, vector)
+
+
+def transform_pose(pose: Pose, transform: Pose) -> Pose:
+    """Left-multiply: T_out = transform * pose."""
+    return pose_multiply(transform, pose)
+
+
+def _named_frames(cfg: dict[str, Any]) -> tuple[str, str]:
+    world_frame = str(cfg.get("frames", {}).get("world", "world"))
+    base_frame = str(cfg.get("frames", {}).get("robot_base", cfg.get("planning_frame", "base_link")))
+    return world_frame, base_frame
+
+
+def frame_transform(
+    source_frame: str,
+    target_frame: str,
+    t_world_base: Pose,
+    world_frame: str,
+    base_frame: str,
+) -> Pose:
+    """Return T_target_source from YAML T_world_base. No hardcoded numbers."""
+    if source_frame == target_frame:
+        return identity_pose()
+    if source_frame == world_frame and target_frame == base_frame:
+        return pose_inverse(t_world_base)
+    if source_frame == base_frame and target_frame == world_frame:
+        return t_world_base
+    raise InspectionViewError(
+        f"unsupported frame conversion {source_frame} -> {target_frame}; "
+        f"known frames are {world_frame!r} and {base_frame!r}"
+    )
+
+
+def express_point(
+    point: Sequence[float],
+    source_frame: str,
+    target_frame: str,
+    t_world_base: Pose,
+    world_frame: str,
+    base_frame: str,
+) -> tuple[float, float, float]:
+    """Express a position in target_frame."""
+    return transform_point(
+        point,
+        frame_transform(source_frame, target_frame, t_world_base, world_frame, base_frame),
+    )
+
+
+def express_vector(
+    vector: Sequence[float],
+    source_frame: str,
+    target_frame: str,
+    t_world_base: Pose,
+    world_frame: str,
+    base_frame: str,
+) -> tuple[float, float, float]:
+    """Express a free vector (direction) in target_frame. Rotation only."""
+    return transform_vector(
+        vector,
+        frame_transform(source_frame, target_frame, t_world_base, world_frame, base_frame),
+    )
+
+
+def express_pose(
+    pose: Pose,
+    source_frame: str,
+    target_frame: str,
+    t_world_base: Pose,
+    world_frame: str,
+    base_frame: str,
+) -> Pose:
+    """Express a Pose in target_frame."""
+    return transform_pose(
+        pose,
+        frame_transform(source_frame, target_frame, t_world_base, world_frame, base_frame),
+    )
+
+
+def require_unit_orthogonal(
+    direction: Sequence[float],
+    up: Sequence[float],
+    *,
+    direction_name: str = "D1",
+    up_name: str = "preferred up",
+) -> tuple[tuple[float, float, float], tuple[float, float, float]]:
+    """Abort if D1/up are not unit length or not orthogonal."""
+    direction_u = vec_normalize(direction, direction_name)
+    up_u = vec_normalize(up, up_name)
+    if abs(vec_norm(direction_u) - 1.0) > _UNIT_NORM_TOL:
+        raise InspectionViewError(f"ABORT: {direction_name} is not unit length")
+    if abs(vec_norm(up_u) - 1.0) > _UNIT_NORM_TOL:
+        raise InspectionViewError(f"ABORT: {up_name} is not unit length")
+    if abs(vec_dot(direction_u, up_u)) > _ORTHO_DOT_TOL:
+        raise InspectionViewError(
+            f"ABORT: {direction_name} and {up_name} are not orthogonal "
+            f"(dot={vec_dot(direction_u, up_u):.6e})"
+        )
+    return direction_u, up_u
+
+
+def pose_in_planning_frame(pose: Pose, geo: dict[str, Any], planning_frame: str) -> Pose:
+    """Convert a working-frame pose into the MoveIt planning frame."""
+    return express_pose(
+        pose,
+        geo["working_frame"],
+        planning_frame,
+        geo["t_world_base"],
+        geo["world_frame"],
+        geo["base_frame"],
+    )
+
+
+def cpp_inspection_vectors(geo: dict[str, Any]) -> dict[str, Any]:
+    """P1/D1/up in world for C++ world-frame validation."""
+    p1 = geo["p1_world"]
+    d1 = geo["d1_world"]
+    up = geo["up_world"]
+    return {
+        "p1_x": float(p1[0]),
+        "p1_y": float(p1[1]),
+        "p1_z": float(p1[2]),
+        "d1_x": float(d1[0]),
+        "d1_y": float(d1[1]),
+        "d1_z": float(d1[2]),
+        "preferred_up_x": float(up[0]),
+        "preferred_up_y": float(up[1]),
+        "preferred_up_z": float(up[2]),
+        "inspection_vector_frame": geo["working_frame"],
+    }
 
 
 def angle_between_deg(left: Sequence[float], right: Sequence[float]) -> float:
@@ -489,27 +641,71 @@ def generate_roll_candidates(
 
 
 def load_stage6_geometry(config_file: str | None = None) -> dict[str, Any]:
-    """Load YAML and compute the unordered required inspection targets."""
+    """Load YAML and compute required inspection targets in world."""
     path = config_file or workcell_config_path()
     cfg = load_yaml(path)
+    world_frame, base_frame = _named_frames(cfg)
+    t_world_base = robot_base_pose(cfg)
     object_cfg = cfg["object"]
     inspect_cfg = cfg["inspection"]
     dims = object_cfg["dimensions"]
     radius = float(dims["radius"])
     height = float(dims["height"])
-    p1 = as_vec3(inspect_cfg["position"])
-    frame = str(inspect_cfg["position"].get("frame", "base_link"))
-    direction = as_vec3(inspect_cfg["direction"])
-    up = as_vec3(inspect_cfg["up_direction"])
+    if "frame" not in inspect_cfg["position"]:
+        raise InspectionViewError("inspection.position.frame is required")
+    if "frame" not in inspect_cfg["direction"]:
+        raise InspectionViewError("inspection.direction.frame is required")
+    if "frame" not in inspect_cfg["up_direction"]:
+        raise InspectionViewError("inspection.up_direction.frame is required")
+    p1_src_frame = str(inspect_cfg["position"]["frame"])
+    d1_src_frame = str(inspect_cfg["direction"]["frame"])
+    up_src_frame = str(inspect_cfg["up_direction"]["frame"])
+    p1_src = as_vec3(inspect_cfg["position"])
+    d1_src, up_src = require_unit_orthogonal(
+        as_vec3(inspect_cfg["direction"]),
+        as_vec3(inspect_cfg["up_direction"]),
+    )
+    p1_world = express_point(
+        p1_src, p1_src_frame, world_frame, t_world_base, world_frame, base_frame
+    )
+    d1_world = vec_normalize(
+        express_vector(
+            d1_src, d1_src_frame, world_frame, t_world_base, world_frame, base_frame
+        ),
+        "D1 world",
+    )
+    up_world = vec_normalize(
+        express_vector(
+            up_src, up_src_frame, world_frame, t_world_base, world_frame, base_frame
+        ),
+        "preferred up world",
+    )
+    d1_world, up_world = require_unit_orthogonal(d1_world, up_world)
+    p1_base = express_point(
+        p1_world, world_frame, base_frame, t_world_base, world_frame, base_frame
+    )
+    d1_base = vec_normalize(
+        express_vector(
+            d1_world, world_frame, base_frame, t_world_base, world_frame, base_frame
+        ),
+        "D1 base",
+    )
+    up_base = vec_normalize(
+        express_vector(
+            up_world, world_frame, base_frame, t_world_base, world_frame, base_frame
+        ),
+        "preferred up base",
+    )
     views = required_cylinder_views(inspect_cfg["faces"], radius, height)
     tcp_t_object = grasp_tcp_object_pose(cfg)
+    working_frame = world_frame
     targets = {
         name: compute_view_target(
             view,
-            p1=p1,
-            frame=frame,
-            inspection_direction=direction,
-            inspection_up=up,
+            p1=p1_world,
+            frame=working_frame,
+            inspection_direction=d1_world,
+            inspection_up=up_world,
             tcp_t_object=tcp_t_object,
         )
         for name, view in views.items()
@@ -518,10 +714,23 @@ def load_stage6_geometry(config_file: str | None = None) -> dict[str, Any]:
         "config_file": path,
         "radius": radius,
         "height": height,
-        "p1": p1,
-        "frame": frame,
-        "direction": vec_normalize(direction, "D1"),
-        "up": vec_normalize(up, "preferred up"),
+        "world_frame": world_frame,
+        "base_frame": base_frame,
+        "working_frame": working_frame,
+        "t_world_base": t_world_base,
+        "p1_source_frame": p1_src_frame,
+        "d1_source_frame": d1_src_frame,
+        "up_source_frame": up_src_frame,
+        "p1": p1_world,
+        "p1_world": p1_world,
+        "p1_base": p1_base,
+        "frame": working_frame,
+        "direction": d1_world,
+        "d1_world": d1_world,
+        "d1_base": d1_base,
+        "up": up_world,
+        "up_world": up_world,
+        "up_base": up_base,
         "tcp_t_object": tcp_t_object,
         "views": views,
         "targets": targets,
@@ -533,7 +742,15 @@ def validate_stage6_geometry(data: dict[str, Any]) -> list[str]:
     failures: list[str] = []
     radius = float(data["radius"])
     height = float(data["height"])
-    p1 = data["p1"]
+    p1 = data["p1_world"]
+    if data.get("working_frame") != data.get("world_frame"):
+        failures.append(
+            f"working_frame {data.get('working_frame')!r} != world {data.get('world_frame')!r}"
+        )
+    try:
+        require_unit_orthogonal(data["d1_world"], data["up_world"])
+    except InspectionViewError as exc:
+        failures.append(str(exc))
     targets: dict[str, InspectionViewTarget] = data["targets"]
     if set(targets) != {"side_pos_y", "side_neg_y", "top_circle"}:
         failures.append(f"required view set mismatch: {sorted(targets)}")
@@ -633,11 +850,17 @@ def format_stage6_report(data: dict[str, Any], failures: Iterable[str]) -> str:
         f"top center offset magnitude = {0.5 * data['height']:.6f}",
         f"expected height/2 = {0.5 * data['height']:.6f}",
         "",
-        "P1 semantic: INSPECTION VIEW CENTER TARGET",
-        f"P1 frame: {data['frame']}",
-        f"P1 xyz: {format_vec(data['p1'])}",
-        f"D1: {format_vec(data['direction'])}",
-        f"preferred up: {format_vec(data['up'])}",
+        "P1 semantic: INSPECTION VIEW / SURFACE CENTER TARGET",
+        f"working frame: {data['working_frame']}",
+        f"P1 source frame: {data['p1_source_frame']}",
+        f"D1 source frame: {data['d1_source_frame']}",
+        f"up source frame: {data['up_source_frame']}",
+        f"target P1 world: {format_vec(data['p1_world'])}",
+        f"P1 base (derived): {format_vec(data['p1_base'])}",
+        f"target D1 world: {format_vec(data['d1_world'])}",
+        f"D1 base (derived): {format_vec(data['d1_base'])}",
+        f"target preferred up world: {format_vec(data['up_world'])}",
+        f"up base (derived): {format_vec(data['up_base'])}",
         "",
         "T_tcp_object:",
         f"  translation: {format_vec((tcp.position.x, tcp.position.y, tcp.position.z))}",
@@ -671,12 +894,17 @@ def format_stage6_report(data: dict[str, Any], failures: Iterable[str]) -> str:
                 f"normal_in_object: {format_vec(view.normal_in_object)}",
                 f"center_in_object: {format_vec(view.center_in_object)}",
                 f"up_in_object: {format_vec(view.up_in_object)}",
-                f"P1 target: {format_vec(target.p1)}",
+                f"target P1 world: {format_vec(data['p1_world'])}",
+                f"actual inspected center world: {format_vec(actual_view_center(target.object_pose, view.center_in_object))}",
+                f"P1 error: {target.view_center_error_m:.3e} m",
+                f"target D1 world: {format_vec(data['d1_world'])}",
+                f"actual face normal world: {format_vec(actual_view_normal(target.object_pose, view.normal_in_object))}",
+                f"D1 error: {target.normal_angle_error_deg:.3e} deg",
+                f"target preferred up world: {format_vec(data['up_world'])}",
+                f"actual up world: {format_vec(actual_view_up(target.object_pose, view.up_in_object))}",
+                f"canonical up error: {target.canonical_up_error_deg:.3e} deg",
                 f"Object target pose: {format_pose(target.object_pose, target.frame)}",
                 f"TCP target pose: {format_pose(target.tcp_pose, target.frame)}",
-                f"view center error: {target.view_center_error_m:.3e} m",
-                f"normal angle error: {target.normal_angle_error_deg:.3e} deg",
-                f"canonical up error: {target.canonical_up_error_deg:.3e} deg",
                 f"|object_center - P1|: {target.object_center_offset_m:.6f} m",
             ]
         )

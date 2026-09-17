@@ -780,13 +780,14 @@ int main(int argc, char** argv)
     moveit::core::RobotState fk(robot_model);
     fk.setToDefaultValues();
     applyJoints(fk, q_final);
-    const Eigen::Isometry3d actual_tcp = tcpInBase(fk, ee_link);
-    const Eigen::Isometry3d actual_object = actual_tcp * cfg.t_tcp_object;
+    const Eigen::Isometry3d actual_tcp_base = tcpInBase(fk, ee_link);
+    const Eigen::Isometry3d actual_object_world =
+        cfg.t_model_base * actual_tcp_base * cfg.t_tcp_object;
     const Eigen::Vector3d actual_center =
-        actual_object.translation() + actual_object.linear() * view.center_in_object;
+        actual_object_world.translation() + actual_object_world.linear() * view.center_in_object;
     const Eigen::Vector3d actual_normal =
-        (actual_object.linear() * view.normal_in_object).normalized();
-    const Eigen::Vector3d actual_up = (actual_object.linear() * view.up_in_object).normalized();
+        (actual_object_world.linear() * view.normal_in_object).normalized();
+    const Eigen::Vector3d actual_up = (actual_object_world.linear() * view.up_in_object).normalized();
     rec.p1_err = (actual_center - p1).norm();
     rec.d1_err =
         std::acos(std::min(1.0, std::max(-1.0, actual_normal.dot(d1)))) * 180.0 / M_PI;

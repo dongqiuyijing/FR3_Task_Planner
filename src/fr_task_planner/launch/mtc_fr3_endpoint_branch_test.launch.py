@@ -13,11 +13,16 @@ _LAUNCH_DIR = os.path.dirname(__file__)
 if _LAUNCH_DIR not in sys.path:
     sys.path.insert(0, _LAUNCH_DIR)
 
-from inspection_view_geometry import generate_roll_candidates, load_stage6_geometry  # noqa: E402
+from inspection_view_geometry import (  # noqa: E402
+    cpp_inspection_vectors,
+    generate_roll_candidates,
+    load_stage6_geometry,
+    pose_in_planning_frame,
+)
 from stage4_pregrasp import _pose_to_dict, compute_stage4_pregrasp_params  # noqa: E402
 
 
-def _flatten_rolls(geo, roll_step_deg: float) -> dict:
+def _flatten_rolls(geo, roll_step_deg: float, planning_frame: str) -> dict:
     views = []
     degs = []
     indexes = []
@@ -27,23 +32,25 @@ def _flatten_rolls(geo, roll_step_deg: float) -> dict:
         for cand in generate_roll_candidates(
             geo["targets"][name], geo["tcp_t_object"], roll_step_deg
         ):
+            object_pose = pose_in_planning_frame(cand.object_pose, geo, planning_frame)
+            tcp_pose = pose_in_planning_frame(cand.tcp_pose, geo, planning_frame)
             views.append(name)
             degs.append(float(cand.roll_deg))
             indexes.append(float(cand.pose_index))
-            obj["x"].append(float(cand.object_pose.position.x))
-            obj["y"].append(float(cand.object_pose.position.y))
-            obj["z"].append(float(cand.object_pose.position.z))
-            obj["qx"].append(float(cand.object_pose.orientation.x))
-            obj["qy"].append(float(cand.object_pose.orientation.y))
-            obj["qz"].append(float(cand.object_pose.orientation.z))
-            obj["qw"].append(float(cand.object_pose.orientation.w))
-            tcp["x"].append(float(cand.tcp_pose.position.x))
-            tcp["y"].append(float(cand.tcp_pose.position.y))
-            tcp["z"].append(float(cand.tcp_pose.position.z))
-            tcp["qx"].append(float(cand.tcp_pose.orientation.x))
-            tcp["qy"].append(float(cand.tcp_pose.orientation.y))
-            tcp["qz"].append(float(cand.tcp_pose.orientation.z))
-            tcp["qw"].append(float(cand.tcp_pose.orientation.w))
+            obj["x"].append(float(object_pose.position.x))
+            obj["y"].append(float(object_pose.position.y))
+            obj["z"].append(float(object_pose.position.z))
+            obj["qx"].append(float(object_pose.orientation.x))
+            obj["qy"].append(float(object_pose.orientation.y))
+            obj["qz"].append(float(object_pose.orientation.z))
+            obj["qw"].append(float(object_pose.orientation.w))
+            tcp["x"].append(float(tcp_pose.position.x))
+            tcp["y"].append(float(tcp_pose.position.y))
+            tcp["z"].append(float(tcp_pose.position.z))
+            tcp["qx"].append(float(tcp_pose.orientation.x))
+            tcp["qy"].append(float(tcp_pose.orientation.y))
+            tcp["qz"].append(float(tcp_pose.orientation.z))
+            tcp["qw"].append(float(tcp_pose.orientation.w))
     return {
         "roll_views": views,
         "roll_degs": degs,
@@ -95,15 +102,8 @@ def _launch_nodes(context, *args, **kwargs):
         LaunchConfiguration("hold_for_introspection").perform(context).lower() == "true"
     )
     params["column_name"] = "mounting_column"
-    params["p1_x"] = float(geo["p1"][0])
-    params["p1_y"] = float(geo["p1"][1])
-    params["p1_z"] = float(geo["p1"][2])
-    params["d1_x"] = float(geo["direction"][0])
-    params["d1_y"] = float(geo["direction"][1])
-    params["d1_z"] = float(geo["direction"][2])
-    params["preferred_up_x"] = float(geo["up"][0])
-    params["preferred_up_y"] = float(geo["up"][1])
-    params["preferred_up_z"] = float(geo["up"][2])
+    params.update(cpp_inspection_vectors(geo))
+    planning_frame = str(params.get("planning_frame", "base_link"))
     for name in _REQUIRED_VIEWS:
         target = geo["targets"][name]
         view = target.view
@@ -116,9 +116,21 @@ def _launch_nodes(context, *args, **kwargs):
         params[f"{name}_up_x"] = float(view.up_in_object[0])
         params[f"{name}_up_y"] = float(view.up_in_object[1])
         params[f"{name}_up_z"] = float(view.up_in_object[2])
-        params.update(_pose_to_dict(f"{name}_canonical_object", target.object_pose, target.frame))
-        params.update(_pose_to_dict(f"{name}_canonical_tcp", target.tcp_pose, target.frame))
-    params.update(_flatten_rolls(geo, roll_step_deg))
+        params.update(
+            _pose_to_dict(
+                f"{name}_canonical_object",
+                pose_in_planning_frame(target.object_pose, geo, planning_frame),
+                planning_frame,
+            )
+        )
+        params.update(
+            _pose_to_dict(
+                f"{name}_canonical_tcp",
+                pose_in_planning_frame(target.tcp_pose, geo, planning_frame),
+                planning_frame,
+            )
+        )
+    params.update(_flatten_rolls(geo, roll_step_deg, planning_frame))
 
     moveit_config = (
         MoveItConfigsBuilder(

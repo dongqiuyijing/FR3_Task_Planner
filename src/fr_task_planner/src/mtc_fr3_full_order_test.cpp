@@ -628,16 +628,19 @@ struct EndpointCheck
 
 EndpointCheck checkEndpoint(const Eigen::Isometry3d& actual_tcp, const ViewSpec& spec,
                             const Eigen::Isometry3d& t_tcp_obj, const Eigen::Vector3d& p1,
-                            const Eigen::Vector3d& d1, const Eigen::Vector3d& preferred_up)
+                            const Eigen::Vector3d& d1, const Eigen::Vector3d& preferred_up,
+                            const Eigen::Isometry3d& t_world_base)
 {
   EndpointCheck out;
   const Eigen::Isometry3d actual_object = actual_tcp * t_tcp_obj;
   poseError(poseToIso(spec.tcp.pose), actual_tcp, out.tcp_pos, out.tcp_ori);
   poseError(poseToIso(spec.object.pose), actual_object, out.obj_pos, out.obj_ori);
+  const Eigen::Isometry3d actual_object_world = t_world_base * actual_object;
   const Eigen::Vector3d actual_center =
-      actual_object.translation() + actual_object.linear() * spec.center_in_object;
-  const Eigen::Vector3d actual_normal = (actual_object.linear() * spec.normal_in_object).normalized();
-  const Eigen::Vector3d actual_up = (actual_object.linear() * spec.up_in_object).normalized();
+      actual_object_world.translation() + actual_object_world.linear() * spec.center_in_object;
+  const Eigen::Vector3d actual_normal =
+      (actual_object_world.linear() * spec.normal_in_object).normalized();
+  const Eigen::Vector3d actual_up = (actual_object_world.linear() * spec.up_in_object).normalized();
   out.view_center_err = (actual_center - p1).norm();
   out.normal_err_deg =
       std::acos(std::min(1.0, std::max(-1.0, actual_normal.dot(d1)))) * 180.0 / M_PI;
@@ -1412,7 +1415,7 @@ int main(int argc, char** argv)
                     !acmAllowed(*view_sols[i]->start()->scene(), object_id, table_name);
       applyJoints(fk_state, segments[3 + i].points.back());
       rec.views[i] = checkEndpoint(tcpInBase(fk_state, ee_link), views[i], t_tcp_obj, p1, d1,
-                                   preferred_up);
+                                   preferred_up, t_world_base);
       rec.view_term_speed[i] = terminalSpeed(solution_msg, 3 + i, rec.view_term_available[i]);
       views_geom = views_geom && rec.views[i].tcp_pos <= pos_tol &&
                    rec.views[i].tcp_ori <= ori_tol_deg && rec.views[i].obj_pos <= pos_tol &&

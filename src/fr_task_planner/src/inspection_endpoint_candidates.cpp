@@ -99,12 +99,14 @@ void validateOne(EndpointCandidate& cand, const planning_scene::PlanningScene& l
   fk.setToDefaultValues();
   applyJoints(fk, cand.joints);
   cand.bounds_ok = static_cast<bool>(jmg) && fk.satisfiesBounds(jmg);
-  const Eigen::Isometry3d actual_tcp = tcpInBase(fk, cfg.ee_link);
-  const Eigen::Isometry3d actual_object = actual_tcp * cfg.t_tcp_object;
+  const Eigen::Isometry3d actual_tcp_base = tcpInBase(fk, cfg.ee_link);
+  const Eigen::Isometry3d actual_tcp_world = cfg.t_model_base * actual_tcp_base;
+  const Eigen::Isometry3d actual_object_world = actual_tcp_world * cfg.t_tcp_object;
   const Eigen::Vector3d actual_center =
-      actual_object.translation() + actual_object.linear() * view.center_in_object;
-  const Eigen::Vector3d actual_normal = (actual_object.linear() * view.normal_in_object).normalized();
-  const Eigen::Vector3d actual_up = (actual_object.linear() * view.up_in_object).normalized();
+      actual_object_world.translation() + actual_object_world.linear() * view.center_in_object;
+  const Eigen::Vector3d actual_normal =
+      (actual_object_world.linear() * view.normal_in_object).normalized();
+  const Eigen::Vector3d actual_up = (actual_object_world.linear() * view.up_in_object).normalized();
   cand.view_center_error = (actual_center - cfg.p1).norm();
   cand.normal_error =
       std::acos(std::min(1.0, std::max(-1.0, actual_normal.dot(cfg.d1.normalized())))) * 180.0 /
@@ -114,7 +116,7 @@ void validateOne(EndpointCandidate& cand, const planning_scene::PlanningScene& l
       180.0 / M_PI;
   double tcp_pos = 0.0;
   double tcp_ori = 0.0;
-  poseError(poseToIso(cand.tcp_target.pose), actual_tcp, tcp_pos, tcp_ori);
+  poseError(poseToIso(cand.tcp_target.pose), actual_tcp_base, tcp_pos, tcp_ori);
   cand.tcp_object_error = tcp_pos;
   cand.joint_distance_from_lift = jointL2(cand.joints, q_lift);
 

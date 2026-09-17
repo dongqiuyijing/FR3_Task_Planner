@@ -625,16 +625,19 @@ struct EndpointCheck
 
 EndpointCheck checkEndpoint(const Eigen::Isometry3d& actual_tcp, const ViewSpec& spec,
                             const Eigen::Isometry3d& t_tcp_obj, const Eigen::Vector3d& p1,
-                            const Eigen::Vector3d& d1, const Eigen::Vector3d& preferred_up)
+                            const Eigen::Vector3d& d1, const Eigen::Vector3d& preferred_up,
+                            const Eigen::Isometry3d& t_world_base)
 {
   EndpointCheck out;
   const Eigen::Isometry3d actual_object = actual_tcp * t_tcp_obj;
   poseError(poseToIso(spec.tcp.pose), actual_tcp, out.tcp_pos, out.tcp_ori);
   poseError(poseToIso(spec.object.pose), actual_object, out.obj_pos, out.obj_ori);
+  const Eigen::Isometry3d actual_object_world = t_world_base * actual_object;
   const Eigen::Vector3d actual_center =
-      actual_object.translation() + actual_object.linear() * spec.center_in_object;
-  const Eigen::Vector3d actual_normal = (actual_object.linear() * spec.normal_in_object).normalized();
-  const Eigen::Vector3d actual_up = (actual_object.linear() * spec.up_in_object).normalized();
+      actual_object_world.translation() + actual_object_world.linear() * spec.center_in_object;
+  const Eigen::Vector3d actual_normal =
+      (actual_object_world.linear() * spec.normal_in_object).normalized();
+  const Eigen::Vector3d actual_up = (actual_object_world.linear() * spec.up_in_object).normalized();
   out.view_center_err = (actual_center - p1).norm();
   out.normal_err_deg =
       std::acos(std::min(1.0, std::max(-1.0, actual_normal.dot(d1)))) * 180.0 / M_PI;
@@ -1569,10 +1572,12 @@ int main(int argc, char** argv)
   const Eigen::Isometry3d t_tcp_obj = poseToIso(tcp_object.pose);
   applyJoints(fk_state, source_seg.points.back());
   const EndpointCheck source_ep =
-      checkEndpoint(tcpInBase(fk_state, ee_link), source, t_tcp_obj, p1, d1, preferred_up);
+      checkEndpoint(tcpInBase(fk_state, ee_link), source, t_tcp_obj, p1, d1, preferred_up,
+                    t_world_base);
   applyJoints(fk_state, target_seg.points.back());
   const EndpointCheck target_ep =
-      checkEndpoint(tcpInBase(fk_state, ee_link), target, t_tcp_obj, p1, d1, preferred_up);
+      checkEndpoint(tcpInBase(fk_state, ee_link), target, t_tcp_obj, p1, d1, preferred_up,
+                    t_world_base);
 
   const auto* arm_jmg = robot_model->getJointModelGroup(group);
   const size_t source_bound_violations =

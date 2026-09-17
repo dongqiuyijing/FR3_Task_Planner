@@ -11,15 +11,23 @@ _LAUNCH_DIR = os.path.join(os.path.dirname(__file__), "..", "launch")
 sys.path.insert(0, os.path.abspath(_LAUNCH_DIR))
 
 from inspection_view_geometry import (  # noqa: E402
+    actual_view_center,
+    actual_view_normal,
+    actual_view_up,
     cylinder_center_in_object,
+    express_point,
+    express_vector,
     interpret_tcp_object_rotation,
     load_stage6_geometry,
     object_pose_for_inspection_view,
+    require_unit_orthogonal,
     tcp_target_from_object,
     validate_stage6_geometry,
+    vec_dot,
     vec_norm,
     vec_sub,
 )
+from fr_control.inspection_poses import vec_normalize  # noqa: E402
 from fr_control.inspection_poses import object_pose_for_face  # noqa: E402
 
 
@@ -116,9 +124,83 @@ class InspectionViewGeometryTest(unittest.TestCase):
         with self.assertRaises(Exception):
             cylinder_center_in_object((1.0, 1.0, 1.0), radius, height)
 
+    def test_authoritative_world_frames_and_values(self) -> None:
+        self.assertEqual(self.data["p1_source_frame"], "world")
+        self.assertEqual(self.data["d1_source_frame"], "world")
+        self.assertEqual(self.data["up_source_frame"], "world")
+        self.assertEqual(self.data["working_frame"], "world")
+        self.assertAlmostEqual(self.data["p1_world"][0], 0.0, places=9)
+        self.assertAlmostEqual(self.data["p1_world"][1], 0.4, places=9)
+        self.assertAlmostEqual(self.data["p1_world"][2], 1.1, places=9)
+        self.assertAlmostEqual(self.data["d1_world"][0], 0.0, places=9)
+        self.assertAlmostEqual(self.data["d1_world"][1], -1.0, places=9)
+        self.assertAlmostEqual(self.data["d1_world"][2], 0.0, places=9)
+        self.assertAlmostEqual(self.data["up_world"][0], 0.0, places=9)
+        self.assertAlmostEqual(self.data["up_world"][1], 0.0, places=9)
+        self.assertAlmostEqual(self.data["up_world"][2], 1.0, places=9)
+
+    def test_world_base_round_trips(self) -> None:
+        geo = self.data
+        p1_back = express_point(
+            geo["p1_base"],
+            geo["base_frame"],
+            geo["world_frame"],
+            geo["t_world_base"],
+            geo["world_frame"],
+            geo["base_frame"],
+        )
+        d1_back = express_vector(
+            geo["d1_base"],
+            geo["base_frame"],
+            geo["world_frame"],
+            geo["t_world_base"],
+            geo["world_frame"],
+            geo["base_frame"],
+        )
+        up_back = express_vector(
+            geo["up_base"],
+            geo["base_frame"],
+            geo["world_frame"],
+            geo["t_world_base"],
+            geo["world_frame"],
+            geo["base_frame"],
+        )
+        for i, expected in enumerate((0.0, 0.4, 1.1)):
+            self.assertAlmostEqual(p1_back[i], expected, places=9)
+        for i, expected in enumerate((0.0, -1.0, 0.0)):
+            self.assertAlmostEqual(d1_back[i], expected, places=9)
+        for i, expected in enumerate((0.0, 0.0, 1.0)):
+            self.assertAlmostEqual(up_back[i], expected, places=9)
+        self.assertAlmostEqual(geo["p1_base"][0], -0.282843, places=5)
+        self.assertAlmostEqual(geo["p1_base"][1], -0.282843, places=5)
+        self.assertAlmostEqual(geo["p1_base"][2], -0.100000, places=5)
+        self.assertAlmostEqual(geo["d1_base"][0], 0.707107, places=5)
+        self.assertAlmostEqual(geo["d1_base"][1], 0.707107, places=5)
+        self.assertAlmostEqual(geo["d1_base"][2], 0.0, places=5)
+        self.assertAlmostEqual(geo["up_base"][0], 0.707107, places=5)
+        self.assertAlmostEqual(geo["up_base"][1], -0.707107, places=5)
+        self.assertAlmostEqual(geo["up_base"][2], 0.0, places=5)
+
+    def test_d1_up_orthogonal_unit(self) -> None:
+        d1, up = require_unit_orthogonal(self.data["d1_world"], self.data["up_world"])
+        self.assertAlmostEqual(vec_norm(d1), 1.0, places=12)
+        self.assertAlmostEqual(vec_norm(up), 1.0, places=12)
+        self.assertAlmostEqual(vec_dot(d1, up), 0.0, places=12)
+
+    def test_canonical_world_p1_d1_up(self) -> None:
+        for name, target in self.data["targets"].items():
+            center = actual_view_center(target.object_pose, target.view.center_in_object)
+            normal = actual_view_normal(target.object_pose, target.view.normal_in_object)
+            up = actual_view_up(target.object_pose, target.view.up_in_object)
+            self.assertLessEqual(vec_norm(vec_sub(center, (0.0, 0.4, 1.1))), 1e-9, msg=name)
+            self.assertLessEqual(
+                abs(vec_normalize(normal, "n")[1] + 1.0), 1e-9, msg=name
+            )
+            self.assertLessEqual(abs(vec_normalize(up, "u")[2] - 1.0), 1e-9, msg=name)
+
     def test_legacy_object_pose_for_face_still_puts_origin_at_p1(self) -> None:
         """Old API is unchanged: object origin == P1. Do not use it for STEP 6."""
-        p1 = (0.40, 0.05, 0.28)
+        p1 = (0.11, 0.22, 0.33)
         legacy = object_pose_for_face(
             p1,
             face_normal=(0.0, 1.0, 0.0),

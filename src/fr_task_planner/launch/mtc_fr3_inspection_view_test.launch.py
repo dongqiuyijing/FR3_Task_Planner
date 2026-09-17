@@ -13,7 +13,11 @@ _LAUNCH_DIR = os.path.dirname(__file__)
 if _LAUNCH_DIR not in sys.path:
     sys.path.insert(0, _LAUNCH_DIR)
 
-from inspection_view_geometry import load_stage6_geometry  # noqa: E402
+from inspection_view_geometry import (  # noqa: E402
+    cpp_inspection_vectors,
+    load_stage6_geometry,
+    pose_in_planning_frame,
+)
 from stage4_pregrasp import (  # noqa: E402
     _pose_to_dict,
     compute_stage4_pregrasp_params,
@@ -38,15 +42,10 @@ def _launch_nodes(context, *args, **kwargs):
     view = target.view
     params["max_solutions"] = 5
     params["view_name"] = view_name
-    params["p1_x"] = float(geo["p1"][0])
-    params["p1_y"] = float(geo["p1"][1])
-    params["p1_z"] = float(geo["p1"][2])
-    params["d1_x"] = float(geo["direction"][0])
-    params["d1_y"] = float(geo["direction"][1])
-    params["d1_z"] = float(geo["direction"][2])
-    params["preferred_up_x"] = float(geo["up"][0])
-    params["preferred_up_y"] = float(geo["up"][1])
-    params["preferred_up_z"] = float(geo["up"][2])
+    params.update(cpp_inspection_vectors(geo))
+    planning_frame = str(params.get("planning_frame", "base_link"))
+    inspect_tcp = pose_in_planning_frame(target.tcp_pose, geo, planning_frame)
+    inspect_object = pose_in_planning_frame(target.object_pose, geo, planning_frame)
     params["center_in_object_x"] = float(view.center_in_object[0])
     params["center_in_object_y"] = float(view.center_in_object[1])
     params["center_in_object_z"] = float(view.center_in_object[2])
@@ -58,8 +57,8 @@ def _launch_nodes(context, *args, **kwargs):
     params["up_in_object_z"] = float(view.up_in_object[2])
     params["max_up_angle_error_deg"] = 5.0
     params["view_center_tolerance"] = 0.005
-    params.update(_pose_to_dict("inspect", target.tcp_pose, target.frame))
-    params.update(_pose_to_dict("inspect_object", target.object_pose, target.frame))
+    params.update(_pose_to_dict("inspect", inspect_tcp, planning_frame))
+    params.update(_pose_to_dict("inspect_object", inspect_object, planning_frame))
 
     from fr_control.stage4_config import load_yaml
 
@@ -86,9 +85,14 @@ def _launch_nodes(context, *args, **kwargs):
             f"View name: {view_name}",
             "required_views = {side_pos_y, side_neg_y, top_circle}",
             "Fixed order encoded? NO",
-            f"Canonical TCP: frame={target.frame} "
+            f"Canonical TCP world: frame={target.frame} "
             f"xyz=({target.tcp_pose.position.x:.6f}, {target.tcp_pose.position.y:.6f}, "
             f"{target.tcp_pose.position.z:.6f})",
+            f"Canonical TCP planning: frame={planning_frame} "
+            f"xyz=({inspect_tcp.position.x:.6f}, {inspect_tcp.position.y:.6f}, "
+            f"{inspect_tcp.position.z:.6f})",
+            f"P1 world: ({geo['p1_world'][0]:.6f}, {geo['p1_world'][1]:.6f}, {geo['p1_world'][2]:.6f})",
+            f"D1 world: ({geo['d1_world'][0]:.6f}, {geo['d1_world'][1]:.6f}, {geo['d1_world'][2]:.6f})",
             "Geometry source: STEP 6 inspection_view_geometry",
             "Lift → View planner: OMPL",
             "THIS STEP IS PLAN-ONLY. NO TRAJECTORY EXECUTION IS PERFORMED.",

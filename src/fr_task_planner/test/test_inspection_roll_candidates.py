@@ -12,6 +12,9 @@ _LAUNCH_DIR = os.path.join(os.path.dirname(__file__), "..", "launch")
 sys.path.insert(0, os.path.abspath(_LAUNCH_DIR))
 
 from inspection_view_geometry import (  # noqa: E402
+    actual_view_center,
+    actual_view_normal,
+    actual_view_up,
     canonicalize_roll_deg,
     generate_roll_candidates,
     load_stage6_geometry,
@@ -20,6 +23,8 @@ from inspection_view_geometry import (  # noqa: E402
     roll_sample_degrees,
     tcp_target_from_object,
     validate_stage6_geometry,
+    vec_norm,
+    vec_sub,
 )
 
 
@@ -87,15 +92,38 @@ class InspectionRollCandidateTest(unittest.TestCase):
             self.assertLess(tcp_ori, 1e-6, msg=name)
             self.assertLess(zero.up_error_deg, 1e-6, msg=name)
 
+    def test_source_frames_are_world(self) -> None:
+        self.assertEqual(self.data["p1_source_frame"], "world")
+        self.assertEqual(self.data["d1_source_frame"], "world")
+        self.assertEqual(self.data["up_source_frame"], "world")
+
     def test_every_roll_keeps_p1_and_d1(self) -> None:
+        p1 = self.data["p1_world"]
+        d1 = self.data["d1_world"]
         for name, rolls in self.rolls.items():
             for cand in rolls:
+                center = actual_view_center(cand.object_pose, cand.view.center_in_object)
+                normal = actual_view_normal(cand.object_pose, cand.view.normal_in_object)
+                self.assertLessEqual(
+                    vec_norm(vec_sub(center, p1)), 1e-6, msg=f"{name} {cand.roll_deg}"
+                )
                 self.assertLessEqual(
                     cand.view_center_error_m, 1e-6, msg=f"{name} {cand.roll_deg}"
                 )
                 self.assertLessEqual(
                     cand.normal_angle_error_deg, 1e-6, msg=f"{name} {cand.roll_deg}"
                 )
+                self.assertAlmostEqual(normal[0], d1[0], places=9)
+                self.assertAlmostEqual(normal[1], d1[1], places=9)
+                self.assertAlmostEqual(normal[2], d1[2], places=9)
+
+    def test_roll_zero_up_is_world_plus_z(self) -> None:
+        for name, rolls in self.rolls.items():
+            zero = rolls[0]
+            up = actual_view_up(zero.object_pose, zero.view.up_in_object)
+            self.assertAlmostEqual(up[0], 0.0, places=9, msg=name)
+            self.assertAlmostEqual(up[1], 0.0, places=9, msg=name)
+            self.assertAlmostEqual(up[2], 1.0, places=9, msg=name)
 
     def test_nonzero_roll_can_have_up_error(self) -> None:
         nonzero = [c for c in self.rolls["side_pos_y"] if abs(c.roll_deg) > 1e-9]

@@ -13,7 +13,11 @@ _LAUNCH_DIR = os.path.dirname(__file__)
 if _LAUNCH_DIR not in sys.path:
     sys.path.insert(0, _LAUNCH_DIR)
 
-from inspection_view_geometry import load_stage6_geometry  # noqa: E402
+from inspection_view_geometry import (  # noqa: E402
+    cpp_inspection_vectors,
+    load_stage6_geometry,
+    pose_in_planning_frame,
+)
 from stage4_pregrasp import (  # noqa: E402
     _pose_to_dict,
     compute_stage4_pregrasp_params,
@@ -23,8 +27,8 @@ from stage4_pregrasp import (  # noqa: E402
 _REQUIRED_VIEWS = ("side_pos_y", "side_neg_y", "top_circle")
 
 
-def _flatten_view(prefix: str, target) -> dict:
-    """STEP 6 target → C++ ViewSpec parameters. No hardcoded pose."""
+def _flatten_view(prefix: str, target, geo, planning_frame: str) -> dict:
+    """STEP 6 world target → C++ ViewSpec in the MoveIt planning frame."""
     view = target.view
     params = {
         f"{prefix}_view": view.name,
@@ -38,8 +42,10 @@ def _flatten_view(prefix: str, target) -> dict:
         f"{prefix}_up_in_object_y": float(view.up_in_object[1]),
         f"{prefix}_up_in_object_z": float(view.up_in_object[2]),
     }
-    params.update(_pose_to_dict(prefix, target.tcp_pose, target.frame))
-    params.update(_pose_to_dict(f"{prefix}_object", target.object_pose, target.frame))
+    tcp = pose_in_planning_frame(target.tcp_pose, geo, planning_frame)
+    obj = pose_in_planning_frame(target.object_pose, geo, planning_frame)
+    params.update(_pose_to_dict(prefix, tcp, planning_frame))
+    params.update(_pose_to_dict(f"{prefix}_object", obj, planning_frame))
     return params
 
 
@@ -64,19 +70,12 @@ def _launch_nodes(context, *args, **kwargs):
     params["hold_for_introspection"] = (
         LaunchConfiguration("hold_for_introspection").perform(context).lower() == "true"
     )
-    params["p1_x"] = float(geo["p1"][0])
-    params["p1_y"] = float(geo["p1"][1])
-    params["p1_z"] = float(geo["p1"][2])
-    params["d1_x"] = float(geo["direction"][0])
-    params["d1_y"] = float(geo["direction"][1])
-    params["d1_z"] = float(geo["direction"][2])
-    params["preferred_up_x"] = float(geo["up"][0])
-    params["preferred_up_y"] = float(geo["up"][1])
-    params["preferred_up_z"] = float(geo["up"][2])
+    params.update(cpp_inspection_vectors(geo))
+    planning_frame = str(params.get("planning_frame", "base_link"))
     params["max_up_angle_error_deg"] = 5.0
     params["view_center_tolerance"] = 0.005
-    params.update(_flatten_view("source", source))
-    params.update(_flatten_view("target", target))
+    params.update(_flatten_view("source", source, geo, planning_frame))
+    params.update(_flatten_view("target", target, geo, planning_frame))
 
     from fr_control.stage4_config import load_yaml
 

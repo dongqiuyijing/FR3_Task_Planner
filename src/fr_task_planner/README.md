@@ -341,7 +341,22 @@ ros2 launch fr_task_planner mtc_fr3_attach_lift_test.launch.py
 
 Geometry only. No Gazebo, no MoveTo Inspection, no view order, no J6 constraint.
 
-P1 is the inspected-region center target, not the object origin.
+P1 is the inspected-region / surface-center target in **world**, not the object
+origin and not a `base_link` constant.
+
+Authoritative values live only in
+`~/fairino_ws/src/fr_control/config/stage4_config.yaml`:
+
+```text
+P1  world [0.0, 0.4, 1.1]
+D1  world [0.0, -1.0, 0.0]
+up  world [0.0, 0.0, 1.0]
+```
+
+STEP 6–11 numbers computed before this correction are **STALE**.
+Historical STEP 9 winner `C-B-A 15.5884 s` and STEP 9A winner
+`A-B-C trial 4 13.6962 s` are **INVALIDATED BY INSPECTION GEOMETRY CORRECTION**.
+Do not treat them as the current fastest order.
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -523,3 +538,17 @@ ros2 launch fr_task_planner mtc_fr3_endpoint_branch_test.launch.py \
   view_name:=side_pos_y
 python3 ~/fr_task_ws/src/fr_task_planner/launch/stage11_endpoint_branching.py
 ```
+
+# STEP 11A — Correct World-Frame Inspection Geometry
+
+Configuration + frame correction + regression. Not a new planner architecture.
+
+```text
+P1/D1/up authority: stage4_config.yaml only
+working frame: world
+MoveTo goals: converted dynamically to planning_frame (base_link)
+setFromIK: T_model_tcp = T_world_base * T_base_tcp
+```
+
+Do not re-run STEP 9 / 9A ranking on this correction. Those historical
+winners are invalidated. Next combinatorial search is STEP 12.
