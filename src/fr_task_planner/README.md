@@ -1,0 +1,155 @@
+# fr_task_planner — Step 2
+
+THIS STEP IS PLAN-ONLY.
+NO TRAJECTORY EXECUTION IS PERFORMED.
+
+## Step 2 目标
+
+最小 MTC 集成测试：用现有 FR3 MoveIt 模型做
+
+```text
+CurrentState → MoveTo(joint-space)
+```
+
+只 `task.plan()`，生成完整 MTC Solution，不执行机械臂。
+
+## 环境
+
+- Ubuntu 22.04
+- ROS 2 Humble
+- 机器人：FAIRINO FR3，6-DOF
+- 主工程（只读）：`~/fairino_ws`
+- 本工作空间：`~/fr_task_ws`
+
+## 依赖
+
+已存在，本阶段不安装、不升级：
+
+- `/opt/ros/humble` 中的 `moveit_task_constructor_core` 0.1.3
+- `/opt/ros/humble` 中的 `pilz_industrial_motion_planner`（本步不用）
+- `~/fairino_ws` 中的 `fairino3_v6_moveit2_config`
+
+## source 顺序
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+```
+
+## 使用的 planning group
+
+从现有 SRDF `fairino3_v6_robot.srdf` 读取，不是猜测：
+
+- planning group: `fairino3_v6_group`
+- base frame: `base_link`（模型 frame / SRDF chain base）
+- EE/TCP: `gripper_tcp`
+- joint names: `j1 j2 j3 j4 j5 j6`
+
+## 使用的 joint names / Home / 测试 goal
+
+Home 从现有只读文件复制：
+
+`~/fairino_ws/src/fr_control/config/stage4_config.yaml`
+`robot.initial_joint_positions`
+
+**源单位：degree。节点内转换成 radian 再交给 MTC / MoveIt。**
+
+| joint | Home (deg) | Goal (deg) | Goal (rad) |
+| --- | --- | --- | --- |
+| j1 | -134.053 | -134.053 | -2.339666 |
+| j2 | -123.046 | -123.046 | -2.147546 |
+| j3 | -112.585 | -112.585 | -1.964995 |
+| j4 | -24.971 | -24.971 | -0.435828 |
+| j5 | -34.448 | -34.448 | -0.601231 |
+| j6 | 47.587 | 52.587 | 0.917818 |
+
+只改 `j6 + 5 deg`。选择理由：
+
+- URDF `j6` 限位 `+/-3.0543 rad`（约 `+/-175 deg`），52.587 deg 在限位内
+- `j6` 是腕部旋转，不改变肩/大臂占用空间
+- 侧装 FR3 + 立柱/桌子场景下，不选 `j1/j2/j3` 做 smoke-test
+
+Start 是运行时 `CurrentState`（期望已有 bringup 把机器人放在 Home）。
+Goal 是上面的固定 joint-space 目标。Planner 是现有 FR3 MoveIt 默认 OMPL（RRTConnect）。现有 `fairino3_v6_moveit2_config` 没有 `ompl_planning.yaml` 命名 planner config，因此不强制 `RRTConnectkConfigDefault`。
+
+## 编译命令
+
+```bash
+cd ~/fr_task_ws
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+colcon build --packages-select fr_task_planner --symlink-install
+```
+
+不要全量编译 MTC。
+
+## 启动命令
+
+终端 A — 已有 FR3 MoveIt / RViz 仿真，不要用本 package 重写：
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_control stage4_full.launch.py
+```
+
+若只要官方 MoveIt demo（无 Gazebo 工作站）：
+
+```bash
+ros2 launch fairino3_v6_moveit2_config demo.launch.py
+```
+
+此时把终端 B 的 `use_sim_time:=false`。
+
+终端 B — 本测试：
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_task_planner mtc_fr3_smoke_test.launch.py
+```
+
+只跑节点：
+
+```bash
+ros2 run fr_task_planner fr3_mtc_smoke_test
+```
+
+`ros2 run` 前仍需已有 `move_group`，且建议用 launch 传入 OMPL 参数。
+
+## 预期输出
+
+日志中应看到：
+
+- `THIS STEP IS PLAN-ONLY`
+- 成功加载 FR3 RobotModel / `fairino3_v6_group`
+- `MTC Task: CurrentState -> MoveTo`
+- `planning result: SUCCESS`
+- `solution 数量: >= 1`
+- 目标 joint state（radian + degree）
+- 节点保持运行，供 RViz introspection 查看，不 execute
+
+RViz Motion Planning Tasks 面板应能看到：
+
+```text
+FR3 MTC Smoke Test
+ ├── CurrentState
+ └── MoveTo
+```
+
+并可查看规划 trajectory。
+
+## PASS / FAIL
+
+STEP 2 PASS（本机已验证：`colcon build`、加载 `fairino3_v6_robot` / `fairino3_v6_group`、`task.plan()` 得到 1 个完整 solution、RViz 已订阅 `/description` `/statistics` `/solution`、未调用 execute、`~/fairino_ws` 无新增修改）。
+
+本次自动化验证使用已有 `fairino3_v6_moveit2_config/move_group.launch.py`。当时没有 `/joint_states`，因此 CurrentState 记录为全 0；OMPL 仍规划到上面的固定 Home+j6 5° 目标。使用 `stage4_full.launch.py` 时，机器人应在 Home，运动幅度会小很多。未通过前不要开始 Step 3。
+
+## 已知问题
+
+- 本 workspace 没有 MTC 源码；使用 apt 安装的 Humble `moveit_task_constructor_core` 0.1.3
+- 节点会从正在运行的 `/move_group` 覆盖 `robot_description` / `robot_description_semantic`，以匹配现有 PlanningScene（含 Gazebo world_to_base）
+- 本步不启动夹爪、零件、Pilz LIN、多候选、缓存、真机执行
