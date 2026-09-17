@@ -860,15 +860,15 @@ std::string jointsDigest(const std::vector<TrajectorySegment>& segs)
   oss.precision(6);
   for (const auto& seg : segs)
   {
-    if (seg.points.empty())
+    for (const auto& point : seg.points)
     {
-      continue;
+      for (const auto& name : kArmJoints)
+      {
+        oss << name << "=" << point.at(name) << ";";
+      }
+      oss << "|";
     }
-    for (const auto& name : kArmJoints)
-    {
-      oss << name << "=" << seg.points.back().at(name) << ";";
-    }
-    oss << "|";
+    oss << "#";
   }
   const std::string text = oss.str();
   uint64_t hash = 1469598103934665603ull;
@@ -987,6 +987,9 @@ int main(int argc, char** argv)
           (node->has_parameter("max_solutions") ? node->get_parameter("max_solutions").as_int() : 5);
   const double hold_seconds =
       node->has_parameter("hold_seconds") ? node->get_parameter("hold_seconds").as_double() : 2.0;
+  const int64_t trial_index =
+      node->has_parameter("trial_index") ? node->get_parameter("trial_index").as_int() : 0;
+  const std::string diagnostic_output_path = getString(node, "diagnostic_output_path", "");
   const bool hold_for_introspection =
       node->has_parameter("hold_for_introspection") &&
       node->get_parameter("hold_for_introspection").as_bool();
@@ -1229,35 +1232,55 @@ int main(int argc, char** argv)
   RCLCPP_INFO(node->get_logger(), "MTC task state:\n%s", state.str().c_str());
 
   std::string failure_class = "COMPLETE TASK SUCCESS";
+  std::string failure_stage = "";
   if (!plan_result || num_solutions < 1)
   {
     std::ostringstream failure;
     task.explainFailure(failure);
     RCLCPP_ERROR(node->get_logger(), "planning failure:\n%s", failure.str().c_str());
-    const std::string fail_text = failure.str() + "\n" + state.str();
-    if (fail_text.find(view_stage_names[2]) != std::string::npos)
+    const std::string fail_text = failure.str();
+    if (fail_text.find("MoveTo PreGrasp") != std::string::npos ||
+        fail_text.find("MoveTo Grasp") != std::string::npos ||
+        fail_text.find("MoveTo Lift") != std::string::npos)
+    {
+      failure_class = "prefix failure";
+      if (fail_text.find("MoveTo PreGrasp") != std::string::npos)
+      {
+        failure_stage = "MoveTo PreGrasp";
+      }
+      else if (fail_text.find("MoveTo Grasp") != std::string::npos)
+      {
+        failure_stage = "MoveTo Grasp";
+      }
+      else
+      {
+        failure_stage = "MoveTo Lift";
+      }
+    }
+    else if (fail_text.find(view_stage_names[2]) != std::string::npos)
     {
       failure_class = "View2→View3 failure";
+      failure_stage = view_stage_names[2];
     }
     else if (fail_text.find(view_stage_names[1]) != std::string::npos)
     {
       failure_class = "View1→View2 failure";
+      failure_stage = view_stage_names[1];
     }
     else if (fail_text.find(view_stage_names[0]) != std::string::npos)
     {
       failure_class = "View1 failure";
-    }
-    else if (fail_text.find("MoveTo Lift") != std::string::npos ||
-             fail_text.find("MoveTo Grasp") != std::string::npos ||
-             fail_text.find("MoveTo PreGrasp") != std::string::npos)
-    {
-      failure_class = "prefix failure";
+      failure_stage = view_stage_names[0];
     }
     else
     {
       failure_class = "OMPL stochastic failure within budget";
     }
     RCLCPP_ERROR(node->get_logger(), "FAILURE CLASSIFICATION:\n%s", failure_class.c_str());
+    if (!failure_stage.empty())
+    {
+      RCLCPP_ERROR(node->get_logger(), "FAILURE STAGE:\n%s", failure_stage.c_str());
+    }
   }
 
 
@@ -1451,16 +1474,23 @@ int main(int argc, char** argv)
               orderLabel(order_names).c_str(), valid_count > 0 ? "PASS" : "FAIL");
 
   {
-    const std::string yaml_path = "/tmp/fr3_step9_" + orderLabel(order_names) + ".yaml";
+    const std::string yaml_path =
+        diagnostic_output_path.empty() ?
+            ("/tmp/fr3_step9_" + orderLabel(order_names) + ".yaml") :
+            diagnostic_output_path;
     std::ofstream yaml(yaml_path);
     yaml << "order: " << view1.name << "," << view2.name << "," << view3.name << "\n";
     yaml << "order_key: " << orderLabel(order_names) << "\n";
+    yaml << "trial_index: " << trial_index << "\n";
+    yaml << "planning_success: " << (num_solutions > 0 ? "true" : "false") << "\n";
+    yaml << "complete_solution_count: " << num_solutions << "\n";
     yaml << "requested: " << solutions_per_order << "\n";
     yaml << "returned: " << recs.size() << "\n";
     yaml << "valid: " << valid_count << "\n";
     yaml << "planning_computation_time: " << planning_computation_s << "\n";
     yaml << "hold_seconds: " << hold_seconds << "\n";
     yaml << "failure_classification: " << failure_class << "\n";
+    yaml << "failure_stage: " << (failure_stage.empty() ? "none" : failure_stage) << "\n";
     yaml << "candidates:\n";
     for (const auto& rec : recs)
     {

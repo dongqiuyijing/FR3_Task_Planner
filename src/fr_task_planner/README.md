@@ -436,3 +436,28 @@ ros2 launch fr_task_planner mtc_fr3_full_order_test.launch.py \
   solutions_per_order:=5
 python3 ~/fr_task_ws/src/fr_task_planner/launch/stage9_order_search.py
 ```
+
+# STEP 9A — Canonical Multi-Run Complete-Task Sampling
+
+```text
+STEP 9A
+
+Purpose:
+prove genuine multiple complete-task sampling under canonical views.
+
+Method:
+multiple independent fresh full-task planning trials per order.
+
+Default:
+5 trials/order × 6 orders = 30 trials.
+
+No roll sampling.
+No execution.
+```
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+python3 ~/fr_task_ws/src/fr_task_planner/launch/stage9a_multi_run_search.py
+```

@@ -63,9 +63,14 @@ def _launch_nodes(context, *args, **kwargs):
 
     params = compute_stage4_pregrasp_params(config_file or None)
     geo = load_stage6_geometry(config_file or None)
+    trial_index = int(LaunchConfiguration("trial_index").perform(context))
+    diagnostic_output_path = LaunchConfiguration("diagnostic_output_path").perform(context)
     params["view_order"] = f"{view1},{view2},{view3}"
     params["solutions_per_order"] = solutions_per_order
     params["max_solutions"] = solutions_per_order
+    params["trial_index"] = trial_index
+    if diagnostic_output_path:
+        params["diagnostic_output_path"] = diagnostic_output_path
     params["hold_for_introspection"] = (
         LaunchConfiguration("hold_for_introspection").perform(context).lower() == "true"
     )
@@ -110,6 +115,7 @@ def _launch_nodes(context, *args, **kwargs):
             "========== STEP 9 PREFLIGHT ==========",
             f"view_order: {view1} → {view2} → {view3}",
             f"solutions_per_order: {solutions_per_order}",
+            f"trial_index: {trial_index}",
             "Canonical orientations only. NO roll sampling.",
             "NO STEP 7/8 edge-cost addition.",
             "NO order ranking inside this process.",
@@ -122,7 +128,9 @@ def _launch_nodes(context, *args, **kwargs):
         Node(
             package="fr_task_planner",
             executable="fr3_mtc_full_order_test",
-            name="fr3_mtc_full_order_test",
+            name=f"fr3_mtc_full_order_test_{view1}_{view2}_{view3}_t{trial_index}".replace(
+                ",", "_"
+            ),
             output="screen",
             parameters=[
                 moveit_config.robot_description,
@@ -178,6 +186,8 @@ def generate_launch_description():
                 default_value="side_pos_y,side_neg_y,top_circle",
             ),
             DeclareLaunchArgument("solutions_per_order", default_value="5"),
+            DeclareLaunchArgument("trial_index", default_value="0"),
+            DeclareLaunchArgument("diagnostic_output_path", default_value=""),
             OpaqueFunction(function=_launch_nodes),
         ]
     )
