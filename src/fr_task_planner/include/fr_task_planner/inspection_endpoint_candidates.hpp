@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -81,6 +82,87 @@ struct EndpointGenerationResult
   std::vector<EndpointCandidate> raw;
   std::vector<EndpointCandidate> valid;
 };
+
+enum class CollisionCategory
+{
+  ROBOT_SELF,
+  ROBOT_TABLE,
+  ROBOT_COLUMN,
+  PART_TABLE,
+  PART_COLUMN,
+  PART_NON_TOUCH_ROBOT,
+  PART_TOUCH_ROBOT,
+  OTHER
+};
+
+struct ContactRecord
+{
+  std::string a;
+  std::string b;
+  std::string pair_key;
+  CollisionCategory category = CollisionCategory::OTHER;
+  int contact_count = 0;
+  bool depth_available = false;
+  double depth = 0.0;
+};
+
+struct CollisionSnapshot
+{
+  bool collision = false;
+  int contact_count = 0;
+  bool depth_available = false;
+  std::vector<ContactRecord> contacts;
+};
+
+struct DifferentialCollision
+{
+  CollisionSnapshot full;
+  CollisionSnapshot no_part;
+  CollisionSnapshot self_only;
+  CollisionSnapshot no_table;
+  CollisionSnapshot no_column;
+};
+
+struct CollisionDiagConfig
+{
+  std::string object_id = "small_part";
+  std::string table_name = "table";
+  std::string column_name = "mounting_column";
+  std::vector<std::string> touch_links;
+};
+
+struct AttachedGeometryReport
+{
+  bool present = false;
+  std::string attached_link;
+  std::string shape;
+  double radius = 0.0;
+  double height = 0.0;
+  std::vector<std::string> touch_links;
+  Eigen::Isometry3d world_pose = Eigen::Isometry3d::Identity();
+  Eigen::Vector3d local_z_in_world = Eigen::Vector3d::UnitZ();
+};
+
+std::string collisionCategoryName(CollisionCategory category);
+std::string normalizePairKey(const std::string& a, const std::string& b);
+CollisionCategory classifyContactPair(const std::string& a, const std::string& b,
+                                      const CollisionDiagConfig& cfg,
+                                      const moveit::core::RobotModel& model);
+bool acmEntryAllowed(const planning_scene::PlanningScene& scene, const std::string& a,
+                     const std::string& b);
+CollisionSnapshot collectCollisionContacts(const planning_scene::PlanningScene& scene,
+                                           const CollisionDiagConfig& cfg);
+planning_scene::PlanningScenePtr cloneDiagnosticScene(const planning_scene::PlanningScene& src);
+void applyJointsToScene(planning_scene::PlanningScene& scene,
+                        const std::map<std::string, double>& joints);
+void detachObjectDiagnostic(planning_scene::PlanningScene& scene, const std::string& object_id);
+void removeWorldObjectDiagnostic(planning_scene::PlanningScene& scene, const std::string& name);
+void stripWorldAndAttachedDiagnostic(planning_scene::PlanningScene& scene);
+DifferentialCollision diagnoseIkCollisions(const planning_scene::PlanningScene& lift_scene,
+                                           const std::map<std::string, double>& joints,
+                                           const CollisionDiagConfig& cfg);
+AttachedGeometryReport inspectAttachedGeometry(const planning_scene::PlanningScene& scene,
+                                               const std::string& object_id);
 
 Eigen::Isometry3d poseToIso(const geometry_msgs::msg::Pose& pose);
 geometry_msgs::msg::Pose isoToPose(const Eigen::Isometry3d& transform);

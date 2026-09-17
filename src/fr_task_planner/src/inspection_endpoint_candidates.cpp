@@ -3,11 +3,16 @@
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
+#include <limits>
 #include <sstream>
 
+#include <geometric_shapes/shapes.h>
 #include <moveit/collision_detection/collision_common.h>
 #include <moveit/collision_detection/collision_matrix.h>
+#include <moveit/robot_state/attached_body.h>
 #include <moveit/robot_state/robot_state.h>
+#include <moveit_msgs/msg/attached_collision_object.hpp>
+#include <moveit_msgs/msg/collision_object.hpp>
 #include <rclcpp/rclcpp.hpp>
 
 namespace fr_task_planner
@@ -421,5 +426,290 @@ EndpointGenerationResult generateValidEndpointCandidates(
   }
   result.valid = unique;
   return result;
+}
+
+std::string collisionCategoryName(CollisionCategory category)
+{
+  switch (category)
+  {
+    case CollisionCategory::ROBOT_SELF:
+      return "ROBOT_SELF";
+    case CollisionCategory::ROBOT_TABLE:
+      return "ROBOT_TABLE";
+    case CollisionCategory::ROBOT_COLUMN:
+      return "ROBOT_COLUMN";
+    case CollisionCategory::PART_TABLE:
+      return "PART_TABLE";
+    case CollisionCategory::PART_COLUMN:
+      return "PART_COLUMN";
+    case CollisionCategory::PART_NON_TOUCH_ROBOT:
+      return "PART_NON_TOUCH_ROBOT";
+    case CollisionCategory::PART_TOUCH_ROBOT:
+      return "PART_TOUCH_ROBOT";
+    case CollisionCategory::OTHER:
+    default:
+      return "OTHER";
+  }
+}
+
+std::string normalizePairKey(const std::string& a, const std::string& b)
+{
+  return (a <= b) ? (a + " <-> " + b) : (b + " <-> " + a);
+}
+
+CollisionCategory classifyContactPair(const std::string& a, const std::string& b,
+                                      const CollisionDiagConfig& cfg,
+                                      const moveit::core::RobotModel& model)
+{
+  const bool a_obj = (a == cfg.object_id);
+  const bool b_obj = (b == cfg.object_id);
+  const bool a_table = (a == cfg.table_name);
+  const bool b_table = (b == cfg.table_name);
+  const bool a_col = (a == cfg.column_name);
+  const bool b_col = (b == cfg.column_name);
+  const bool a_robot = model.hasLinkModel(a);
+  const bool b_robot = model.hasLinkModel(b);
+  if (a_obj || b_obj)
+  {
+    const std::string other = a_obj ? b : a;
+    if (other == cfg.table_name)
+    {
+      return CollisionCategory::PART_TABLE;
+    }
+    if (other == cfg.column_name)
+    {
+      return CollisionCategory::PART_COLUMN;
+    }
+    if (model.hasLinkModel(other))
+    {
+      if (isTouchLink(other, cfg.touch_links))
+      {
+        return CollisionCategory::PART_TOUCH_ROBOT;
+      }
+      return CollisionCategory::PART_NON_TOUCH_ROBOT;
+    }
+    return CollisionCategory::OTHER;
+  }
+  if ((a_table && b_robot) || (b_table && a_robot))
+  {
+    return CollisionCategory::ROBOT_TABLE;
+  }
+  if ((a_col && b_robot) || (b_col && a_robot))
+  {
+    return CollisionCategory::ROBOT_COLUMN;
+  }
+  if (a_robot && b_robot)
+  {
+    return CollisionCategory::ROBOT_SELF;
+  }
+  return CollisionCategory::OTHER;
+}
+
+bool acmEntryAllowed(const planning_scene::PlanningScene& scene, const std::string& a,
+                     const std::string& b)
+{
+  collision_detection::AllowedCollision::Type type;
+  return scene.getAllowedCollisionMatrix().getEntry(a, b, type) &&
+         type == collision_detection::AllowedCollision::ALWAYS;
+}
+
+namespace
+{
+void fillSnapshot(CollisionSnapshot& snap, const collision_detection::CollisionResult& res,
+                  const CollisionDiagConfig& cfg, const moveit::core::RobotModel& model)
+{
+  snap.collision = res.collision;
+  snap.contact_count = 0;
+  snap.depth_available = false;
+  snap.contacts.clear();
+  for (const auto& item : res.contacts)
+  {
+    ContactRecord rec;
+    rec.a = item.first.first;
+    rec.b = item.first.second;
+    rec.pair_key = normalizePairKey(rec.a, rec.b);
+    rec.category = classifyContactPair(rec.a, rec.b, cfg, model);
+    rec.contact_count = static_cast<int>(item.second.size());
+    snap.contact_count += rec.contact_count;
+    rec.depth_available = false;
+    rec.depth = 0.0;
+    if (!item.second.empty())
+    {
+      const double depth = item.second.front().depth;
+      if (std::isfinite(depth) && std::abs(depth) > std::numeric_limits<double>::epsilon())
+      {
+        rec.depth_available = true;
+        rec.depth = depth;
+        snap.depth_available = true;
+      }
+    }
+    snap.contacts.push_back(rec);
+  }
+  std::sort(snap.contacts.begin(), snap.contacts.end(),
+            [](const ContactRecord& lhs, const ContactRecord& rhs) {
+              return lhs.pair_key < rhs.pair_key;
+            });
+}
+
+CollisionSnapshot checkSceneContacts(const planning_scene::PlanningScene& scene,
+                                     const CollisionDiagConfig& cfg, bool self_only)
+{
+  collision_detection::CollisionRequest req;
+  req.contacts = true;
+  req.max_contacts = 200;
+  req.max_contacts_per_pair = 8;
+  collision_detection::CollisionResult res;
+  if (self_only)
+  {
+    scene.checkSelfCollision(req, res);
+  }
+  else
+  {
+    scene.checkCollision(req, res);
+  }
+  CollisionSnapshot snap;
+  fillSnapshot(snap, res, cfg, *scene.getRobotModel());
+  return snap;
+}
+}  // namespace
+
+CollisionSnapshot collectCollisionContacts(const planning_scene::PlanningScene& scene,
+                                           const CollisionDiagConfig& cfg)
+{
+  return checkSceneContacts(scene, cfg, false);
+}
+
+planning_scene::PlanningScenePtr cloneDiagnosticScene(const planning_scene::PlanningScene& src)
+{
+  return planning_scene::PlanningScene::clone(src.diff());
+}
+
+void applyJointsToScene(planning_scene::PlanningScene& scene,
+                        const std::map<std::string, double>& joints)
+{
+  applyJoints(scene.getCurrentStateNonConst(), joints);
+}
+
+void detachObjectDiagnostic(planning_scene::PlanningScene& scene, const std::string& object_id)
+{
+  if (!scene.getCurrentState().hasAttachedBody(object_id))
+  {
+    return;
+  }
+  moveit_msgs::msg::AttachedCollisionObject msg;
+  msg.object.id = object_id;
+  msg.object.operation = moveit_msgs::msg::CollisionObject::REMOVE;
+  scene.processAttachedCollisionObjectMsg(msg);
+}
+
+void removeWorldObjectDiagnostic(planning_scene::PlanningScene& scene, const std::string& name)
+{
+  moveit_msgs::msg::CollisionObject msg;
+  msg.id = name;
+  msg.operation = moveit_msgs::msg::CollisionObject::REMOVE;
+  scene.processCollisionObjectMsg(msg);
+}
+
+void stripWorldAndAttachedDiagnostic(planning_scene::PlanningScene& scene)
+{
+  std::vector<const moveit::core::AttachedBody*> attached;
+  scene.getCurrentState().getAttachedBodies(attached);
+  for (const auto* body : attached)
+  {
+    detachObjectDiagnostic(scene, body->getName());
+  }
+  for (const auto& name : scene.getWorld()->getObjectIds())
+  {
+    removeWorldObjectDiagnostic(scene, name);
+  }
+}
+
+DifferentialCollision diagnoseIkCollisions(const planning_scene::PlanningScene& lift_scene,
+                                           const std::map<std::string, double>& joints,
+                                           const CollisionDiagConfig& cfg)
+{
+  DifferentialCollision report;
+  {
+    auto scene = cloneDiagnosticScene(lift_scene);
+    applyJointsToScene(*scene, joints);
+    report.full = checkSceneContacts(*scene, cfg, false);
+  }
+  {
+    auto scene = cloneDiagnosticScene(lift_scene);
+    applyJointsToScene(*scene, joints);
+    detachObjectDiagnostic(*scene, cfg.object_id);
+    report.no_part = checkSceneContacts(*scene, cfg, false);
+  }
+  {
+    auto scene = cloneDiagnosticScene(lift_scene);
+    applyJointsToScene(*scene, joints);
+    stripWorldAndAttachedDiagnostic(*scene);
+    report.self_only = checkSceneContacts(*scene, cfg, true);
+  }
+  {
+    auto scene = cloneDiagnosticScene(lift_scene);
+    applyJointsToScene(*scene, joints);
+    removeWorldObjectDiagnostic(*scene, cfg.table_name);
+    report.no_table = checkSceneContacts(*scene, cfg, false);
+  }
+  {
+    auto scene = cloneDiagnosticScene(lift_scene);
+    applyJointsToScene(*scene, joints);
+    removeWorldObjectDiagnostic(*scene, cfg.column_name);
+    report.no_column = checkSceneContacts(*scene, cfg, false);
+  }
+  return report;
+}
+
+AttachedGeometryReport inspectAttachedGeometry(const planning_scene::PlanningScene& scene,
+                                               const std::string& object_id)
+{
+  AttachedGeometryReport report;
+  const auto& state = scene.getCurrentState();
+  if (!state.hasAttachedBody(object_id))
+  {
+    return report;
+  }
+  const auto* body = state.getAttachedBody(object_id);
+  if (!body)
+  {
+    return report;
+  }
+  report.present = true;
+  report.attached_link = body->getAttachedLinkName();
+  report.touch_links.assign(body->getTouchLinks().begin(), body->getTouchLinks().end());
+  const auto& shapes = body->getShapes();
+  if (!shapes.empty() && shapes.front())
+  {
+    switch (shapes.front()->type)
+    {
+      case shapes::CYLINDER:
+      {
+        const auto* cyl = static_cast<const shapes::Cylinder*>(shapes.front().get());
+        report.shape = "cylinder";
+        report.radius = cyl->radius;
+        report.height = cyl->length;
+        break;
+      }
+      case shapes::BOX:
+      {
+        const auto* box = static_cast<const shapes::Box*>(shapes.front().get());
+        report.shape = "box";
+        report.radius = box->size[0];
+        report.height = box->size[2];
+        break;
+      }
+      default:
+        report.shape = "unknown";
+        break;
+    }
+  }
+  const auto& worlds = body->getGlobalCollisionBodyTransforms();
+  if (!worlds.empty())
+  {
+    report.world_pose = worlds.front();
+    report.local_z_in_world = worlds.front().linear() * Eigen::Vector3d::UnitZ();
+  }
+  return report;
 }
 }  // namespace fr_task_planner

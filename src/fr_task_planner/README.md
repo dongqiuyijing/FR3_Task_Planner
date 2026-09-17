@@ -552,3 +552,20 @@ setFromIK: T_model_tcp = T_world_base * T_base_tcp
 
 Do not re-run STEP 9 / 9A ranking on this correction. Those historical
 winners are invalidated. Next combinatorial search is STEP 12.
+
+# STEP 11B — Diagnose Top-Circle Target Collisions
+
+Diagnosis only. `top_circle` may remain unreachable. Do not relax ACM,
+change P1/D1/up, or execute.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_task_planner mtc_fr3_top_circle_collision_diag.launch.py
+python3 ~/fr_task_ws/src/fr_task_planner/launch/stage8_transition_matrix.py
+```
+
+Authoritative STEP 8 edge result is `/tmp/fr3_step8_<src>_<tgt>.yaml`
+(`result` / `reachable` / `complete_solution_count`), not launch exit code.
+Authoritative STEP 11B dump is `/tmp/fr3_step11b_top_circle.yaml`.

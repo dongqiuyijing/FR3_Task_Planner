@@ -849,6 +849,19 @@ double terminalSpeed(const moveit_task_constructor_msgs::msg::Solution& solution
   }
   return 0.0;
 }
+
+void writeStep8AuthoritativeYaml(const std::string& source, const std::string& target, bool pass,
+                                 size_t complete_solutions, double planning_computation_s)
+{
+  const std::string yaml_path = "/tmp/fr3_step8_" + source + "_" + target + ".yaml";
+  std::ofstream yaml(yaml_path);
+  yaml << "source_view: " << source << "\n";
+  yaml << "target_view: " << target << "\n";
+  yaml << "result: " << (pass ? "PASS" : "FAIL") << "\n";
+  yaml << "reachable: " << (pass ? "true" : "false") << "\n";
+  yaml << "complete_solution_count: " << complete_solutions << "\n";
+  yaml << "planning_computation_time: " << planning_computation_s << "\n";
+}
 }  // namespace
 
 int main(int argc, char** argv)
@@ -1176,6 +1189,9 @@ int main(int argc, char** argv)
                  target_diag.find("COLLISION") != std::string::npos ?
                      "NO" :
                      (target_diag.find("IK FAILURE") != std::string::npos ? "UNKNOWN" : "YES"));
+    writeStep8AuthoritativeYaml(source.name, target.name, false, 0, planning_computation_s);
+    RCLCPP_ERROR(node->get_logger(), "Wrote edge diagnostics: /tmp/fr3_step8_%s_%s.yaml",
+                 source.name.c_str(), target.name.c_str());
     task.publishAllSolutions(false);
     shutdownSpinner(executor, spinner);
     return 3;
@@ -1712,6 +1728,7 @@ int main(int argc, char** argv)
     std::ofstream yaml(yaml_path);
     yaml << "source_view: " << source.name << "\n";
     yaml << "target_view: " << target.name << "\n";
+    yaml << "result: " << (all_ok ? "PASS" : "FAIL") << "\n";
     yaml << "reachable: " << (all_ok ? "true" : "false") << "\n";
     yaml << "complete_solution_count: " << num_solutions << "\n";
     yaml << "predicted_duration: " << target_duration << "\n";

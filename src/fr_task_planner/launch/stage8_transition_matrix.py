@@ -2,6 +2,9 @@
 """Run six independent STEP 8 directed-edge tests from real Home.
 
 Each edge launches a fresh complete MTC Task. No execute. No order ranking.
+
+Authoritative result is /tmp/fr3_step8_<src>_<tgt>.yaml
+(result / reachable / complete_solution_count), not ros2 launch exit code.
 """
 
 from __future__ import annotations
@@ -43,24 +46,42 @@ def _run_edge(source: str, target: str, config_file: str) -> int:
     return subprocess.call(cmd)
 
 
-def _collect_yaml() -> dict:
-    out = {}
-    for source, target in EDGES:
-        path = Path(f"/tmp/fr3_step8_{source}_{target}.yaml")
-        if not path.is_file():
-            out[(source, target)] = None
+def _read_yaml(path: Path) -> dict[str, str] | None:
+    if not path.is_file():
+        return None
+    data: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if ":" not in line or line.startswith(" ") or line.startswith("\t"):
             continue
-        data = {}
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if ":" not in line or line.startswith(" ") or line.startswith("\t"):
-                continue
-            key, value = line.split(":", 1)
-            data[key.strip()] = value.strip()
-        out[(source, target)] = data
+        key, value = line.split(":", 1)
+        data[key.strip()] = value.strip()
+    return data
+
+
+def _authoritative_pass(row: dict[str, str] | None) -> tuple[bool, str]:
+    if not row:
+        return False, "FAIL"
+    result = row.get("result", "").upper()
+    if result in {"PASS", "FAIL"}:
+        return result == "PASS", result
+    reachable = row.get("reachable", "").lower()
+    try:
+        complete = int(float(row.get("complete_solution_count", "0")))
+    except ValueError:
+        complete = 0
+    if reachable == "true" and complete > 0:
+        return True, "PASS"
+    return False, "FAIL"
+
+
+def _collect_yaml() -> dict[tuple[str, str], dict[str, str] | None]:
+    out: dict[tuple[str, str], dict[str, str] | None] = {}
+    for source, target in EDGES:
+        out[(source, target)] = _read_yaml(Path(f"/tmp/fr3_step8_{source}_{target}.yaml"))
     return out
 
 
-def _write_matrix(results: dict[tuple[str, str], int]) -> None:
+def _write_matrix(launch_rcs: dict[tuple[str, str], int]) -> tuple[int, int]:
     rows = _collect_yaml()
     matrix_path = Path("/tmp/fr3_step8_transition_matrix.yaml")
     lines = [
@@ -68,15 +89,26 @@ def _write_matrix(results: dict[tuple[str, str], int]) -> None:
         "order_ranking: false",
         "roll_sampling: false",
         "execution: false",
+        "authority: edge_yaml",
         "edges:",
     ]
+    passed = 0
+    failed = 0
+    verdicts: dict[tuple[str, str], str] = {}
     for source, target in EDGES:
-        rc = results[(source, target)]
-        row = rows.get((source, target)) or {}
+        row = rows.get((source, target))
+        ok, verdict = _authoritative_pass(row)
+        verdicts[(source, target)] = verdict
+        if ok:
+            passed += 1
+        else:
+            failed += 1
+        rc = launch_rcs[(source, target)]
         lines.append(f"  - source: {source}")
         lines.append(f"    target: {target}")
-        lines.append(f"    reachable: {'true' if rc == 0 else 'false'}")
-        lines.append(f"    return_code: {rc}")
+        lines.append(f"    result: {verdict}")
+        lines.append(f"    reachable: {'true' if ok else 'false'}")
+        lines.append(f"    launch_return_code: {rc}")
         if row:
             for key in (
                 "complete_solution_count",
@@ -87,6 +119,9 @@ def _write_matrix(results: dict[tuple[str, str], int]) -> None:
             ):
                 if key in row:
                     lines.append(f"    {key}: {row[key]}")
+        else:
+            lines.append("    complete_solution_count: 0")
+            lines.append("    missing_yaml: true")
     matrix_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"\nWrote {matrix_path}", flush=True)
 
@@ -100,9 +135,11 @@ def _write_matrix(results: dict[tuple[str, str], int]) -> None:
             if src == tgt:
                 cells.append("   -   ")
             else:
-                cells.append(" PASS  " if results[(src, tgt)] == 0 else " FAIL  ")
+                cells.append(" PASS  " if verdicts[(src, tgt)] == "PASS" else " FAIL  ")
         print(f"FROM {LABEL[src]:<4} {''.join(cells)}")
     print("\nNO ORDER RANKING PERFORMED")
+    print(f"\n{passed}/6 directed edges PASS (authoritative YAML, not launch exit code)")
+    return passed, failed
 
 
 def main() -> int:
@@ -110,15 +147,13 @@ def main() -> int:
         "STAGE4_CONFIG",
         os.path.expanduser("~/fairino_ws/src/fr_control/config/stage4_config.yaml"),
     )
-    results = {}
-    failed = 0
+    launch_rcs = {}
     for source, target in EDGES:
-        rc = _run_edge(source, target, config)
-        results[(source, target)] = rc
-        if rc != 0:
-            failed += 1
-    _write_matrix(results)
-    print(f"\n{6 - failed}/6 directed edges PASS")
+        yaml_path = Path(f"/tmp/fr3_step8_{source}_{target}.yaml")
+        if yaml_path.exists():
+            yaml_path.unlink()
+        launch_rcs[(source, target)] = _run_edge(source, target, config)
+    passed, failed = _write_matrix(launch_rcs)
     return 0 if failed == 0 else 1
 
 

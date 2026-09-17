@@ -160,6 +160,23 @@ ament_target_dependencies(fr3_mtc_endpoint_branch_test
   moveit_task_constructor_msgs
 )
 
+add_executable(fr3_mtc_collision_diag src/mtc_fr3_collision_diag.cpp)
+target_include_directories(fr3_mtc_collision_diag PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(fr3_mtc_collision_diag fr_task_planner_endpoints)
+ament_target_dependencies(fr3_mtc_collision_diag
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  moveit_task_constructor_core
+  moveit_task_constructor_msgs
+)
+
 install(TARGETS
   fr3_mtc_smoke_test
   fr3_mtc_pregrasp_test
@@ -171,6 +188,7 @@ install(TARGETS
   fr3_mtc_full_order_test
   fr3_mtc_roll_candidate_test
   fr3_mtc_endpoint_branch_test
+  fr3_mtc_collision_diag
   DESTINATION lib/${PROJECT_NAME}
 )
 
