@@ -5,9 +5,17 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from fr_control.constants import ARM_JOINTS, BASE_FRAME, EE_LINK, PLANNING_GROUP
+from fr_control.constants import (
+    ARM_JOINTS,
+    ATTACH_LINK,
+    BASE_FRAME,
+    EE_LINK,
+    GRIPPER_TOUCH_LINKS,
+    PLANNING_GROUP,
+)
 from fr_control.grasp_poses import (
     compute_grasp_poses,
+    pose_in_frame,
     pose_inverse,
     pose_multiply,
 )
@@ -78,14 +86,24 @@ def compute_stage4_pregrasp_params(config_file: str | None = None) -> dict[str, 
     object_base = _to_base_link(poses_world.object_pose, t_world_base)
     grasp_base = _to_base_link(poses_world.grasp_pose, t_world_base)
     pregrasp_base = _to_base_link(poses_world.pre_grasp_pose, t_world_base)
+    lift_base = _to_base_link(poses_world.lift_pose, t_world_base)
+    tcp_object = pose_in_frame(poses_world.grasp_pose, poses_world.object_pose)
+    touch_links = [
+        str(name) for name in cfg.get("gripper_touch_links", GRIPPER_TOUCH_LINKS)
+    ]
+    table_name = str(cfg.get("table", {}).get("name", "table"))
+    lift_distance = float(grasp_cfg["lift_distance"])
 
     # YAML robot.initial_joint_positions is degree. Convert once here.
     home_deg = joint_positions(cfg)
     params: dict[str, Any] = {
         "planning_group": str(cfg.get("move_group", PLANNING_GROUP)),
         "planning_frame": planning_frame,
+        "world_frame": world_frame,
         "ee_link": str(cfg.get("ee_link", EE_LINK)),
+        "attach_link": str(cfg.get("ee_link", ATTACH_LINK)),
         "pregrasp_distance": pregrasp_distance,
+        "lift_distance": lift_distance,
         "position_tolerance": float(motion_cfg.get("position_tolerance", 0.005)),
         "orientation_tolerance_deg": float(
             motion_cfg.get("orientation_tolerance_deg", 3.0)
@@ -97,6 +115,8 @@ def compute_stage4_pregrasp_params(config_file: str | None = None) -> dict[str, 
         "object_shape": str(object_cfg.get("shape", "")),
         "object_radius": float(object_cfg.get("dimensions", {}).get("radius", 0.0)),
         "object_height": float(object_cfg.get("dimensions", {}).get("height", 0.0)),
+        "table_name": table_name,
+        "touch_links": list(touch_links),
         "config_file": path,
         "geometry_source": "fr_control.stage4_config + fr_control.grasp_poses",
     }
@@ -104,10 +124,14 @@ def compute_stage4_pregrasp_params(config_file: str | None = None) -> dict[str, 
         params[f"home_{name}_deg"] = float(deg)
         params[f"home_{name}"] = math.radians(float(deg))
 
+    params.update(_pose_to_dict("world_base", t_world_base, world_frame))
     params.update(_pose_to_dict("object_world", poses_world.object_pose, world_frame))
     params.update(_pose_to_dict("object", object_base, planning_frame))
     params.update(_pose_to_dict("grasp", grasp_base, planning_frame))
     params.update(_pose_to_dict("pregrasp", pregrasp_base, planning_frame))
+    params.update(_pose_to_dict("lift", lift_base, planning_frame))
+    params.update(_pose_to_dict("lift_world", poses_world.lift_pose, world_frame))
+    params.update(_pose_to_dict("tcp_object", tcp_object, str(cfg.get("ee_link", ATTACH_LINK))))
     return params
 
 
@@ -200,6 +224,40 @@ def format_step4_preflight(params: dict[str, Any]) -> str:
             "THIS STEP IS PLAN-ONLY. NO TRAJECTORY EXECUTION IS PERFORMED.",
         ]
     )
+    return "\n".join(lines)
+
+
+def format_step5_preflight(params: dict[str, Any]) -> str:
+    """Human-readable STEP 5 preflight. Geometry still comes from compute_grasp_poses()."""
+    lines = [
+        "========== STEP 5 PREFLIGHT ==========",
+        f"Planning group: {params['planning_group']}",
+        f"Goal frame: {params['planning_frame']}",
+        f"World frame: {params['world_frame']}",
+        f"IK / attach link: {params['ee_link']}",
+        f"Geometry source: {params['geometry_source']}",
+        f"Object: {params['object_name']} {params['object_shape']} "
+        f"r={params['object_radius']} h={params['object_height']}",
+        f"Table: {params['table_name']}",
+        f"Touch links: {params['touch_links']}",
+        f"Object world: xyz=({params['object_world_x']:.6f}, "
+        f"{params['object_world_y']:.6f}, {params['object_world_z']:.6f})",
+        f"PreGrasp: xyz=({params['pregrasp_x']:.6f}, {params['pregrasp_y']:.6f}, "
+        f"{params['pregrasp_z']:.6f})",
+        f"Grasp: xyz=({params['grasp_x']:.6f}, {params['grasp_y']:.6f}, "
+        f"{params['grasp_z']:.6f})",
+        f"Lift: xyz=({params['lift_x']:.6f}, {params['lift_y']:.6f}, "
+        f"{params['lift_z']:.6f})",
+        f"Expected T_tcp_object: xyz=({params['tcp_object_x']:.6f}, "
+        f"{params['tcp_object_y']:.6f}, {params['tcp_object_z']:.6f}) "
+        f"xyzw=({params['tcp_object_qx']:.6f}, {params['tcp_object_qy']:.6f}, "
+        f"{params['tcp_object_qz']:.6f}, {params['tcp_object_qw']:.6f})",
+        f"PreGrasp distance: {params['pregrasp_distance']}",
+        f"Lift distance from YAML: {params['lift_distance']}",
+        "Physical gripper close: NOT EXECUTED",
+        "Predicted grasp scene transition: YES",
+        "THIS STEP IS PLAN-ONLY. NO TRAJECTORY EXECUTION IS PERFORMED.",
+    ]
     return "\n".join(lines)
 
 

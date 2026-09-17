@@ -298,3 +298,41 @@ source ~/fairino_ws/install/setup.bash
 source ~/fr_task_ws/install/setup.bash
 ros2 launch fr_task_planner mtc_fr3_grasp_chain_test.launch.py
 ```
+
+# STEP 5 — Collision-Aware Grasp + Attach + Lift（plan-only）
+
+THIS STEP IS PLAN-ONLY.
+NO TRAJECTORY EXECUTION IS PERFORMED.
+
+Physical gripper close: NOT EXECUTED.
+Predicted grasp scene transition: YES.
+
+```text
+CurrentState
+      ↓
+Prepare Object On Table
+      ↓
+MoveTo PreGrasp     (OMPL)
+      ↓
+Allow Gripper-Part Contact
+      ↓
+MoveTo Grasp        (Pilz LIN)
+      ↓
+Attach Part To TCP  (GRASP_COMMIT / predicted attach)
+      ↓
+MoveTo Lift         (Pilz LIN, world +Z)
+      ↓
+Restore Part-Table Collision
+```
+
+几何、Home、touch links、lift_distance 全部继续来自 `fr_control.stage4_config` + `compute_grasp_poses()`。
+`small_part` 只进入 MTC candidate PlanningScene，不永久污染 live `/move_group` scene，也不做 Gazebo weld。
+
+终端 B：
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_task_planner mtc_fr3_attach_lift_test.launch.py
+```
