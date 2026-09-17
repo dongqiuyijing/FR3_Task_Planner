@@ -354,3 +354,16 @@ python3 -m unittest ~/fr_task_ws/src/fr_task_planner/test/test_inspection_view_g
 Legacy `stage4_inspection_test.py` still uses old object-center-at-P1 semantics.
 New FR3_Task_Planner STEP 6 uses corrected inspection-view-center-at-P1 semantics.
 Legacy executor migration is deferred until the new planner geometry is validated.
+
+# STEP 7 — Lift → Individual Inspection View Reachability
+
+Plan-only. One complete grasp chain per view. No order search.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_task_planner mtc_fr3_inspection_view_test.launch.py view_name:=side_pos_y
+ros2 launch fr_task_planner mtc_fr3_inspection_view_test.launch.py view_name:=side_neg_y
+ros2 launch fr_task_planner mtc_fr3_inspection_view_test.launch.py view_name:=top_circle
+```
