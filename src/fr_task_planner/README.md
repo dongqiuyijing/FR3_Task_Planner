@@ -400,3 +400,39 @@ ros2 launch fr_task_planner mtc_fr3_view_transition_test.launch.py \
   source_view:=side_pos_y target_view:=side_neg_y
 python3 ~/fr_task_ws/src/fr_task_planner/launch/stage8_transition_matrix.py
 ```
+
+# STEP 9 — Full-Task Inspection Order Search
+
+```text
+STEP 9
+Full canonical inspection-order search.
+
+Permutations:
+6
+
+Candidate budget:
+configurable, default 5 per order
+
+Ranking:
+1. total predicted motion duration
+2. within 0.3 s of fastest → minimum total joint path length
+
+Global optimum claim:
+NO
+
+Execution:
+NO
+```
+
+Each permutation is one complete Home→View1→View2→View3 MTC Task.
+Do not add STEP 7/8 edge costs. Do not execute.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_task_planner mtc_fr3_full_order_test.launch.py \
+  view_order:=side_pos_y,side_neg_y,top_circle \
+  solutions_per_order:=5
+python3 ~/fr_task_ws/src/fr_task_planner/launch/stage9_order_search.py
+```
