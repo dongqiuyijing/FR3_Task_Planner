@@ -336,3 +336,21 @@ source ~/fairino_ws/install/setup.bash
 source ~/fr_task_ws/install/setup.bash
 ros2 launch fr_task_planner mtc_fr3_attach_lift_test.launch.py
 ```
+
+# STEP 6 — Cylinder Inspection View Geometry
+
+Geometry only. No Gazebo, no MoveTo Inspection, no view order, no J6 constraint.
+
+P1 is the inspected-region center target, not the object origin.
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+python3 ~/fr_task_ws/src/fr_task_planner/launch/stage6_inspection_views.py
+python3 -m unittest ~/fr_task_ws/src/fr_task_planner/test/test_inspection_view_geometry.py
+```
+
+Legacy `stage4_inspection_test.py` still uses old object-center-at-P1 semantics.
+New FR3_Task_Planner STEP 6 uses corrected inspection-view-center-at-P1 semantics.
+Legacy executor migration is deferred until the new planner geometry is validated.
