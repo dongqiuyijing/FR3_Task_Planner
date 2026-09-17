@@ -225,3 +225,76 @@ ros2 launch fr_task_planner mtc_fr3_smoke_test.launch.py
 实测 Current ≠ Home，最大误差约 3.18 rad。按 STEP 3 规则：不规划、不自动回 Home。
 
 不修改主工程的替代：先用现有 Stage4/MoveIt 把机器人放到 YAML Home，再重新跑本节点。本节点不会发运动命令。
+
+# STEP 4 — Home → PreGrasp → Grasp（plan-only）
+
+THIS STEP IS PLAN-ONLY.
+NO TRAJECTORY EXECUTION IS PERFORMED.
+
+STEP 4 validates task-level chained motion planning, not a physically complete grasp.
+
+```text
+Task:
+Home → PreGrasp → Grasp
+
+OMPL:
+Home → PreGrasp
+
+Pilz LIN:
+PreGrasp → Grasp
+
+Plan only:
+YES
+
+Object collision included:
+NO
+
+Gripper close:
+NO
+
+Attach:
+NO
+
+Lift:
+NO
+```
+
+一个 MTC Task：
+
+```text
+CurrentState
+      ↓
+MoveTo PreGrasp   (OMPL)
+      ↓
+MoveTo Grasp      (Pilz LIN)
+```
+
+OMPL 终点状态必须直接成为 LIN 起点。禁止拆成两个独立 `task.plan()`。
+
+`small_part` 当前不在 PlanningScene。STEP 5 才加入：
+
+- small_part collision object
+- grasp contact policy
+- gripper close
+- attach object
+
+table / mounting_column 碰撞保持启用。
+
+## 启动命令
+
+终端 A：
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+ros2 launch fr_control stage4_full.launch.py
+```
+
+终端 B：
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_task_planner mtc_fr3_grasp_chain_test.launch.py
+```

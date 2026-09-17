@@ -154,5 +154,54 @@ def format_preflight(params: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_step4_preflight(params: dict[str, Any]) -> str:
+    """Human-readable STEP 4 preflight. Geometry still comes from compute_grasp_poses()."""
+    dx = float(params["grasp_x"]) - float(params["pregrasp_x"])
+    dy = float(params["grasp_y"]) - float(params["pregrasp_y"])
+    dz = float(params["grasp_z"]) - float(params["pregrasp_z"])
+    distance = math.sqrt(dx * dx + dy * dy + dz * dz)
+    lines = [
+        "========== STEP 4 PREFLIGHT ==========",
+        f"Planning group: {params['planning_group']}",
+        f"Planning frame / Goal frame: {params['planning_frame']}",
+        f"IK frame: {params['ee_link']}",
+        f"Geometry source: {params['geometry_source']}",
+        f"Object: {params['object_name']} {params['object_shape']} "
+        f"r={params['object_radius']} h={params['object_height']}",
+        "Expected Home (rad / deg):",
+    ]
+    for name in ARM_JOINTS:
+        lines.append(
+            f"  {name}={params[f'home_{name}']:.6f} rad "
+            f"({params[f'home_{name}_deg']:.3f} deg)"
+        )
+    lines.extend(
+        [
+            f"PreGrasp: frame={params['pregrasp_frame']} "
+            f"xyz=({params['pregrasp_x']:.6f}, {params['pregrasp_y']:.6f}, "
+            f"{params['pregrasp_z']:.6f}) xyzw=({params['pregrasp_qx']:.6f}, "
+            f"{params['pregrasp_qy']:.6f}, {params['pregrasp_qz']:.6f}, "
+            f"{params['pregrasp_qw']:.6f})",
+            f"Grasp: frame={params['grasp_frame']} "
+            f"xyz=({params['grasp_x']:.6f}, {params['grasp_y']:.6f}, "
+            f"{params['grasp_z']:.6f}) xyzw=({params['grasp_qx']:.6f}, "
+            f"{params['grasp_qy']:.6f}, {params['grasp_qz']:.6f}, "
+            f"{params['grasp_qw']:.6f})",
+            "PreGrasp → Grasp Cartesian displacement:",
+            f"  dx={dx:.6f}",
+            f"  dy={dy:.6f}",
+            f"  dz={dz:.6f}",
+            f"  distance={distance:.6f}",
+            f"Approach / PreGrasp distance: {params['pregrasp_distance']}",
+            "Stage: MoveTo PreGrasp  Pipeline: ompl",
+            "Stage: MoveTo Grasp     Pipeline: pilz_industrial_motion_planner  Planner ID: LIN",
+            "small_part: ABSENT — known Step 4 limitation",
+            "STEP 4 validates task-level chained motion planning, not a physically complete grasp.",
+            "THIS STEP IS PLAN-ONLY. NO TRAJECTORY EXECUTION IS PERFORMED.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     print(format_preflight(compute_stage4_pregrasp_params()))
