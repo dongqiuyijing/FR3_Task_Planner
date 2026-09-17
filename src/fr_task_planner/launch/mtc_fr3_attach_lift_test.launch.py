@@ -13,7 +13,11 @@ _LAUNCH_DIR = os.path.dirname(__file__)
 if _LAUNCH_DIR not in sys.path:
     sys.path.insert(0, _LAUNCH_DIR)
 
-from stage4_pregrasp import compute_stage4_pregrasp_params, format_step5_preflight  # noqa: E402
+from stage4_pregrasp import (  # noqa: E402
+    compute_stage4_pregrasp_params,
+    format_step5_preflight,
+    format_step5a_touch_check,
+)
 
 
 def _launch_nodes(context, *args, **kwargs):
@@ -46,6 +50,7 @@ def _launch_nodes(context, *args, **kwargs):
     ]
 
     return [
+        LogInfo(msg=format_step5a_touch_check(params)),
         LogInfo(msg=format_step5_preflight(params)),
         Node(
             package="fr_task_planner",
@@ -74,10 +79,17 @@ def _launch_nodes(context, *args, **kwargs):
 
 def generate_launch_description():
     """Plan-only Home → PreGrasp → Grasp → Attach → Lift. No Stage4 start, no execute."""
-    default_config = os.path.join(
-        get_package_share_directory("fr_control"),
-        "config",
-        "stage4_config.yaml",
+    source_config = os.path.expanduser(
+        "~/fairino_ws/src/fr_control/config/stage4_config.yaml"
+    )
+    default_config = (
+        source_config
+        if os.path.isfile(source_config)
+        else os.path.join(
+            get_package_share_directory("fr_control"),
+            "config",
+            "stage4_config.yaml",
+        )
     )
     return LaunchDescription(
         [

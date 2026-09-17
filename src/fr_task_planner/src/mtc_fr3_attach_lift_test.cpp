@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <map>
@@ -39,6 +40,9 @@ const char* kOmplPipeline = "ompl";
 const char* kPilzPipeline = "pilz_industrial_motion_planner";
 const char* kPilzPlannerId = "LIN";
 const std::vector<std::string> kArmJoints = { "j1", "j2", "j3", "j4", "j5", "j6" };
+const std::vector<std::string> kArmBodyLinks = { "base_link",    "shoulder_link", "upperarm_link",
+                                                 "forearm_link", "wrist1_link",   "wrist2_link",
+                                                 "wrist3_link" };
 constexpr double kLateralTolM = 0.001;
 constexpr double kLinOriTolDeg = 0.5;
 constexpr double kAttachPosTolM = 0.001;
@@ -346,6 +350,105 @@ bool acmAllowed(const planning_scene::PlanningScene& scene, const std::string& a
          type == collision_detection::AllowedCollision::ALWAYS;
 }
 
+bool isTouchLink(const std::string& link, const std::vector<std::string>& touch_links)
+{
+  return std::find(touch_links.begin(), touch_links.end(), link) != touch_links.end();
+}
+
+bool isArmBodyLink(const std::string& link)
+{
+  return std::find(kArmBodyLinks.begin(), kArmBodyLinks.end(), link) != kArmBodyLinks.end();
+}
+
+struct ObjectPairContact
+{
+  std::string other;
+  double depth = 0.0;
+  Eigen::Vector3d pos = Eigen::Vector3d::Zero();
+};
+
+std::vector<ObjectPairContact> rawObjectContacts(const planning_scene::PlanningScene& scene,
+                                                 const std::string& object_id,
+                                                 const std::string& table_name,
+                                                 const std::vector<std::string>& touch_links)
+{
+  const auto diag = scene.diff();
+  auto& acm = diag->getAllowedCollisionMatrixNonConst();
+  if (!touch_links.empty())
+  {
+    acm.setEntry(object_id, touch_links, false);
+  }
+  acm.setEntry(object_id, table_name, true);
+  collision_detection::CollisionRequest req;
+  req.contacts = true;
+  req.max_contacts = 50;
+  req.max_contacts_per_pair = 3;
+  collision_detection::CollisionResult res;
+  diag->checkCollision(req, res);
+
+  std::vector<ObjectPairContact> out;
+  for (const auto& item : res.contacts)
+  {
+    const std::string& a = item.first.first;
+    const std::string& b = item.first.second;
+    if (a != object_id && b != object_id)
+    {
+      continue;
+    }
+    const std::string other = (a == object_id) ? b : a;
+    if (other == table_name)
+    {
+      continue;
+    }
+    ObjectPairContact contact;
+    contact.other = other;
+    if (!item.second.empty())
+    {
+      contact.depth = item.second.front().depth;
+      contact.pos = item.second.front().pos;
+    }
+    out.push_back(contact);
+  }
+  return out;
+}
+
+void classifyObjectContacts(const std::vector<ObjectPairContact>& contacts,
+                            const std::vector<std::string>& touch_links,
+                            std::vector<ObjectPairContact>& allowed,
+                            std::vector<ObjectPairContact>& illegal)
+{
+  allowed.clear();
+  illegal.clear();
+  for (const auto& contact : contacts)
+  {
+    if (isTouchLink(contact.other, touch_links))
+    {
+      allowed.push_back(contact);
+    }
+    else
+    {
+      illegal.push_back(contact);
+    }
+  }
+}
+
+void logContacts(const rclcpp::Logger& logger, const std::string& title,
+                 const std::vector<ObjectPairContact>& contacts)
+{
+  if (contacts.empty())
+  {
+    RCLCPP_INFO(logger, "%s\nNONE", title.c_str());
+    return;
+  }
+  RCLCPP_INFO(logger, "%s", title.c_str());
+  for (const auto& contact : contacts)
+  {
+    RCLCPP_INFO(logger, "  small_part <-> %s  depth=%.6f m  pos=(%.6f, %.6f, %.6f)",
+                contact.other.c_str(), contact.depth, contact.pos.x(), contact.pos.y(),
+                contact.pos.z());
+  }
+}
+
 void setStringParam(const rclcpp::Node::SharedPtr& node, const std::string& name,
                     const std::string& value)
 {
@@ -560,6 +663,27 @@ int main(int argc, char** argv)
   RCLCPP_INFO(node->get_logger(), "Grasp:\n%s", formatPose(grasp).c_str());
   RCLCPP_INFO(node->get_logger(), "Lift:\n%s", formatPose(lift).c_str());
   RCLCPP_INFO(node->get_logger(), "Lift distance from YAML:\n%.6f", lift_distance);
+  {
+    std::ostringstream yaml_touch;
+    std::vector<std::string> arm_allowed;
+    for (const auto& link : touch_links)
+    {
+      if (!yaml_touch.str().empty())
+      {
+        yaml_touch << ", ";
+      }
+      yaml_touch << link;
+      if (isArmBodyLink(link))
+      {
+        arm_allowed.push_back(link);
+      }
+    }
+    RCLCPP_INFO(node->get_logger(), "========== STEP 5A TOUCH LINKS ==========");
+    RCLCPP_INFO(node->get_logger(), "YAML gripper_touch_links:\n%s", yaml_touch.str().c_str());
+    RCLCPP_INFO(node->get_logger(),
+                "Arm links incorrectly allowed:\n%s",
+                arm_allowed.empty() ? "NONE" : yaml_touch.str().c_str());
+  }
   if (max_home_error > home_tol)
   {
     RCLCPP_ERROR(node->get_logger(), "Current is not Stage4 Home. Planning aborted.");
@@ -884,6 +1008,37 @@ int main(int argc, char** argv)
   RCLCPP_INFO(node->get_logger(), "Translation error: %.6f m", attach_pos);
   RCLCPP_INFO(node->get_logger(), "Orientation error: %.6f deg", attach_ori);
 
+  std::vector<ObjectPairContact> grasp_allowed;
+  std::vector<ObjectPairContact> grasp_illegal;
+  if (grasp_sol && grasp_sol->end() && grasp_sol->end()->scene())
+  {
+    classifyObjectContacts(
+        rawObjectContacts(*grasp_sol->end()->scene(), object_id, table_name, touch_links),
+        touch_links, grasp_allowed, grasp_illegal);
+  }
+  RCLCPP_INFO(node->get_logger(), "========== GRASP COLLISION PAIRS ==========");
+  logContacts(node->get_logger(), "Allowed:", grasp_allowed);
+  logContacts(node->get_logger(), "Illegal:", grasp_illegal);
+  if (!grasp_illegal.empty())
+  {
+    RCLCPP_ERROR(node->get_logger(), "Grasp robot state:\n%s",
+                 formatJoints(jointsFromState(grasp_sol->end()->scene()->getCurrentState())).c_str());
+    RCLCPP_ERROR(node->get_logger(), "Object relative pose:\n%s",
+                 formatIso(expected_tcp_object, attach_link).c_str());
+  }
+
+  std::vector<ObjectPairContact> attach_allowed;
+  std::vector<ObjectPairContact> attach_illegal;
+  if (attach_sol && attach_sol->end() && attach_sol->end()->scene())
+  {
+    classifyObjectContacts(
+        rawObjectContacts(*attach_sol->end()->scene(), object_id, table_name, touch_links),
+        touch_links, attach_allowed, attach_illegal);
+  }
+  RCLCPP_INFO(node->get_logger(), "========== ATTACHED STATE COLLISION ==========");
+  logContacts(node->get_logger(), "Allowed attached contacts:", attach_allowed);
+  logContacts(node->get_logger(), "Illegal attached-object robot collisions:", attach_illegal);
+
   bool lift_attached = false;
   if (lift_sol && lift_sol->start() && lift_sol->start()->scene())
   {
@@ -941,6 +1096,42 @@ int main(int argc, char** argv)
   RCLCPP_INFO(node->get_logger(), "Lift endpoint position error: %.6f m", lift_pos);
   RCLCPP_INFO(node->get_logger(), "Lift endpoint orientation error: %.6f deg", lift_ori);
 
+  std::vector<ObjectPairContact> lift_illegal_all;
+  size_t lift_states_checked = 0;
+  if (lift_sol && lift_sol->start() && lift_sol->start()->scene())
+  {
+    for (size_t i = 0; i < lift_seg.points.size(); ++i)
+    {
+      const auto diag = lift_sol->start()->scene()->diff();
+      applyJoints(diag->getCurrentStateNonConst(), lift_seg.points[i]);
+      std::vector<ObjectPairContact> allowed_i;
+      std::vector<ObjectPairContact> illegal_i;
+      classifyObjectContacts(rawObjectContacts(*diag, object_id, table_name, touch_links),
+                             touch_links, allowed_i, illegal_i);
+      ++lift_states_checked;
+      for (const auto& contact : illegal_i)
+      {
+        RCLCPP_ERROR(node->get_logger(),
+                     "Lift waypoint %zu illegal: small_part <-> %s depth=%.6f", i,
+                     contact.other.c_str(), contact.depth);
+        lift_illegal_all.push_back(contact);
+      }
+    }
+  }
+  RCLCPP_INFO(node->get_logger(), "========== LIFT TRAJECTORY COLLISION CHECK ==========");
+  RCLCPP_INFO(node->get_logger(), "trajectory states checked: %zu", lift_states_checked);
+  logContacts(node->get_logger(), "illegal collisions:", lift_illegal_all);
+  for (const auto& link : kArmBodyLinks)
+  {
+    bool hit = false;
+    for (const auto& contact : lift_illegal_all)
+    {
+      hit = hit || contact.other == link;
+    }
+    RCLCPP_INFO(node->get_logger(), "attached part vs %s: %s", link.c_str(),
+                hit ? "COLLISION" : "NO COLLISION");
+  }
+
   const double pre_grasp_disc = maxJointError(ompl_seg.points.back(), grasp_seg.points.front());
   const double grasp_attach_disc =
       attach_sol && attach_sol->end() ?
@@ -976,7 +1167,8 @@ int main(int argc, char** argv)
       attach_ori <= kAttachOriTolDeg && lift_attached && lift_seg.planner_id == "LIN" &&
       lift_lateral <= kLateralTolM && lift_ori_dev <= kLinOriTolDeg &&
       std::abs(lift_delta.z() - lift_distance) <= 0.005 && lift_delta.z() > 0.0 &&
-      max_disc <= 1e-4 && lift_pos <= pos_tol && lift_ori <= ori_tol_deg;
+      max_disc <= 1e-4 && lift_pos <= pos_tol && lift_ori <= ori_tol_deg && grasp_illegal.empty() &&
+      attach_illegal.empty() && lift_illegal_all.empty();
 
   RCLCPP_INFO(node->get_logger(), "Physical gripper close: NOT EXECUTED");
   RCLCPP_INFO(node->get_logger(), "Gazebo weld: NOT PERFORMED");

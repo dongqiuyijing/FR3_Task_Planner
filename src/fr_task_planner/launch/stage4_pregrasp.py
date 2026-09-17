@@ -227,6 +227,43 @@ def format_step4_preflight(params: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+_ARM_LINKS_MUST_NOT_TOUCH = (
+    "base_link",
+    "shoulder_link",
+    "upperarm_link",
+    "forearm_link",
+    "wrist1_link",
+    "wrist2_link",
+    "wrist3_link",
+)
+
+
+def format_step5a_touch_check(params: dict[str, Any]) -> str:
+    """Static STEP 5A check: YAML touch links must match gripper-only constants."""
+    yaml_links = [str(name) for name in params.get("touch_links", [])]
+    const_links = [str(name) for name in GRIPPER_TOUCH_LINKS]
+    extra = [name for name in yaml_links if name not in const_links]
+    missing = [name for name in const_links if name not in yaml_links]
+    arm_allowed = [name for name in _ARM_LINKS_MUST_NOT_TOUCH if name in yaml_links]
+    lines = [
+        "========== STEP 5A TOUCH LINKS ==========",
+        "YAML gripper_touch_links:",
+        ", ".join(yaml_links) if yaml_links else "(empty)",
+        "constants GRIPPER_TOUCH_LINKS:",
+        ", ".join(const_links),
+        f"Exact match?\n{'YES' if yaml_links == const_links else 'NO'}",
+    ]
+    if extra:
+        lines.append(f"YAML extras: {extra}")
+    if missing:
+        lines.append(f"YAML missing: {missing}")
+    lines.append(
+        "Arm links incorrectly allowed:\n"
+        + (", ".join(arm_allowed) if arm_allowed else "NONE")
+    )
+    return "\n".join(lines)
+
+
 def format_step5_preflight(params: dict[str, Any]) -> str:
     """Human-readable STEP 5 preflight. Geometry still comes from compute_grasp_poses()."""
     lines = [
@@ -257,6 +294,10 @@ def format_step5_preflight(params: dict[str, Any]) -> str:
         "Physical gripper close: NOT EXECUTED",
         "Predicted grasp scene transition: YES",
         "THIS STEP IS PLAN-ONLY. NO TRAJECTORY EXECUTION IS PERFORMED.",
+        "========== GRIPPER TCP ==========",
+        "parent / fixed transform: gripper_base_link -> gripper_tcp xyz=(0, 0, 0.150)",
+        "physical interpretation: center between the two fingertip ends",
+        "T_tcp_object identity expected?\nYES",
     ]
     return "\n".join(lines)
 
