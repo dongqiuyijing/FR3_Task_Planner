@@ -11,10 +11,13 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 find_package(moveit_core REQUIRED)
 find_package(moveit_msgs REQUIRED)
 find_package(moveit_ros_planning_interface REQUIRED)
 find_package(moveit_task_constructor_core REQUIRED)
+find_package(moveit_task_constructor_msgs REQUIRED)
 
 add_executable(fr3_mtc_smoke_test src/mtc_fr3_smoke_test.cpp)
 ament_target_dependencies(fr3_mtc_smoke_test
@@ -25,7 +28,20 @@ ament_target_dependencies(fr3_mtc_smoke_test
   moveit_task_constructor_core
 )
 
-install(TARGETS fr3_mtc_smoke_test
+add_executable(fr3_mtc_pregrasp_test src/mtc_fr3_pregrasp_test.cpp)
+ament_target_dependencies(fr3_mtc_pregrasp_test
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  moveit_task_constructor_core
+  moveit_task_constructor_msgs
+)
+
+install(TARGETS fr3_mtc_smoke_test fr3_mtc_pregrasp_test
   DESTINATION lib/${PROJECT_NAME}
 )
 

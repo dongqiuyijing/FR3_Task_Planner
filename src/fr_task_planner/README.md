@@ -146,10 +146,82 @@ FR3 MTC Smoke Test
 
 STEP 2 PASS（本机已验证：`colcon build`、加载 `fairino3_v6_robot` / `fairino3_v6_group`、`task.plan()` 得到 1 个完整 solution、RViz 已订阅 `/description` `/statistics` `/solution`、未调用 execute、`~/fairino_ws` 无新增修改）。
 
-本次自动化验证使用已有 `fairino3_v6_moveit2_config/move_group.launch.py`。当时没有 `/joint_states`，因此 CurrentState 记录为全 0；OMPL 仍规划到上面的固定 Home+j6 5° 目标。使用 `stage4_full.launch.py` 时，机器人应在 Home，运动幅度会小很多。未通过前不要开始 Step 3。
+本次自动化验证使用已有 `fairino3_v6_moveit2_config/move_group.launch.py`。当时没有 `/joint_states`，因此 CurrentState 记录为全 0；OMPL 仍规划到上面的固定 Home+j6 5° 目标。STEP 3 禁止再用这种方式验收。
 
 ## 已知问题
 
 - 本 workspace 没有 MTC 源码；使用 apt 安装的 Humble `moveit_task_constructor_core` 0.1.3
 - 节点会从正在运行的 `/move_group` 覆盖 `robot_description` / `robot_description_semantic`，以匹配现有 PlanningScene（含 Gazebo world_to_base）
 - 本步不启动夹爪、零件、Pilz LIN、多候选、缓存、真机执行
+
+# Step 3 — Home → PreGrasp（plan-only）
+
+THIS STEP IS PLAN-ONLY.
+NO TRAJECTORY EXECUTION IS PERFORMED.
+
+## Step 3 目标
+
+在真实 `stage4_full` 环境中：
+
+```text
+真实 /joint_states Home
+        ↓
+   CurrentState
+        ↓
+      OMPL
+        ↓
+Stage4 PreGrasp TCP Pose
+```
+
+只规划，不执行。CurrentState 为全 0 时直接 FAIL。
+
+## PreGrasp 来源
+
+不在 C++ 重写抓取几何。launch helper `launch/stage4_pregrasp.py` 只调用：
+
+- `fr_control.stage4_config`
+- `fr_control.grasp_poses.compute_grasp_poses`
+
+然后将 `base_link` 下的 Pose 参数传给 `fr3_mtc_pregrasp_test`。
+
+Home 容差：`0.03 rad`。YAML `initial_joint_positions` 单位是 degree，helper 转成 radian。
+
+目标误差沿用 Stage4：
+
+- `motion.position_tolerance` = 0.005 m
+- `motion.orientation_tolerance_deg` = 3.0 deg
+
+## 启动命令
+
+终端 A：
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+ros2 launch fr_control stage4_full.launch.py
+```
+
+等待 Gazebo、`/joint_states`、`move_group`、PlanningScene 稳定。
+
+终端 B：
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_task_planner mtc_fr3_pregrasp_test.launch.py
+```
+
+STEP 2 回归：
+
+```bash
+ros2 launch fr_task_planner mtc_fr3_smoke_test.launch.py
+```
+
+## STEP 3 已知问题
+
+`stage4_full` 的 `/joint_states` 来自 `fairino3_gazebo/urdf/gz_ros2_control.xacro` 的 `initial_value`（弧度），不是 YAML Home（度）。
+
+实测 Current ≠ Home，最大误差约 3.18 rad。按 STEP 3 规则：不规划、不自动回 Home。
+
+不修改主工程的替代：先用现有 Stage4/MoveIt 把机器人放到 YAML Home，再重新跑本节点。本节点不会发运动命令。
