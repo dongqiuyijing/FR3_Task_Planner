@@ -499,3 +499,27 @@ python3 -m unittest \
 ros2 launch fr_task_planner mtc_fr3_roll_candidate_test.launch.py
 python3 ~/fr_task_ws/src/fr_task_planner/launch/stage10_roll_candidates.py
 ```
+
+# STEP 11 — Integrated Roll×IK Endpoint Branching
+
+```text
+STEP 11
+
+Purpose:
+one Inspection View, one complete Home→Lift Task, one Alternatives
+container of exact joint-goal OMPL branches.
+
+No View→View.
+No 6-order search.
+No ranking.
+No execution.
+```
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+ros2 launch fr_task_planner mtc_fr3_endpoint_branch_test.launch.py \
+  view_name:=side_pos_y
+python3 ~/fr_task_ws/src/fr_task_planner/launch/stage11_endpoint_branching.py
+```

@@ -119,8 +119,36 @@ ament_target_dependencies(fr3_mtc_full_order_test
   moveit_task_constructor_msgs
 )
 
+add_library(fr_task_planner_endpoints src/inspection_endpoint_candidates.cpp)
+target_include_directories(fr_task_planner_endpoints PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+ament_target_dependencies(fr_task_planner_endpoints
+  rclcpp
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+)
+
 add_executable(fr3_mtc_roll_candidate_test src/mtc_fr3_roll_candidate_test.cpp)
 ament_target_dependencies(fr3_mtc_roll_candidate_test
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  moveit_task_constructor_core
+  moveit_task_constructor_msgs
+)
+
+add_executable(fr3_mtc_endpoint_branch_test src/mtc_fr3_endpoint_branch_test.cpp)
+target_include_directories(fr3_mtc_endpoint_branch_test PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(fr3_mtc_endpoint_branch_test fr_task_planner_endpoints)
+ament_target_dependencies(fr3_mtc_endpoint_branch_test
   rclcpp
   geometry_msgs
   sensor_msgs
@@ -142,6 +170,7 @@ install(TARGETS
   fr3_mtc_view_transition_test
   fr3_mtc_full_order_test
   fr3_mtc_roll_candidate_test
+  fr3_mtc_endpoint_branch_test
   DESTINATION lib/${PROJECT_NAME}
 )
 
