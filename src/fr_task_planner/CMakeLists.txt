@@ -20,6 +20,7 @@ find_package(moveit_task_constructor_core REQUIRED)
 find_package(moveit_task_constructor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometric_shapes REQUIRED)
 
 add_executable(fr3_mtc_smoke_test src/mtc_fr3_smoke_test.cpp)
 ament_target_dependencies(fr3_mtc_smoke_test
@@ -121,7 +122,10 @@ ament_target_dependencies(fr3_mtc_full_order_test
   moveit_task_constructor_msgs
 )
 
-add_library(fr_task_planner_endpoints src/inspection_endpoint_candidates.cpp)
+add_library(fr_task_planner_endpoints
+  src/inspection_endpoint_candidates.cpp
+  src/inspection_visibility.cpp
+)
 target_include_directories(fr_task_planner_endpoints PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
@@ -130,6 +134,7 @@ ament_target_dependencies(fr_task_planner_endpoints
   geometry_msgs
   moveit_core
   moveit_msgs
+  geometric_shapes
 )
 
 add_executable(fr3_mtc_roll_candidate_test src/mtc_fr3_roll_candidate_test.cpp)
@@ -234,6 +239,25 @@ ament_target_dependencies(fr3_mtc_mount_layout_search
   moveit_task_constructor_msgs
 )
 
+add_executable(fr3_mtc_complete_abc_search src/mtc_fr3_complete_abc_search.cpp)
+target_include_directories(fr3_mtc_complete_abc_search PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(fr3_mtc_complete_abc_search fr_task_planner_endpoints)
+ament_target_dependencies(fr3_mtc_complete_abc_search
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  std_msgs
+  visualization_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  moveit_task_constructor_core
+  moveit_task_constructor_msgs
+)
+
 install(TARGETS
   fr3_mtc_smoke_test
   fr3_mtc_pregrasp_test
@@ -249,6 +273,7 @@ install(TARGETS
   fr3_mtc_sim_visualizer
   fr3_mtc_dense_top_circle_search
   fr3_mtc_mount_layout_search
+  fr3_mtc_complete_abc_search
   DESTINATION lib/${PROJECT_NAME}
 )
 

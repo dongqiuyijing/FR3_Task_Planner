@@ -640,6 +640,34 @@ def generate_roll_candidates(
     return out
 
 
+def retarget_inspection_p1(data: dict[str, Any], p1_world: Sequence[float]) -> dict[str, Any]:
+    """Rebuild view targets at a new P1. Does not write stage4_config.yaml."""
+    p1 = (float(p1_world[0]), float(p1_world[1]), float(p1_world[2]))
+    out = dict(data)
+    out["p1"] = p1
+    out["p1_world"] = p1
+    out["p1_base"] = express_point(
+        p1,
+        out["world_frame"],
+        out["base_frame"],
+        out["t_world_base"],
+        out["world_frame"],
+        out["base_frame"],
+    )
+    out["targets"] = {
+        name: compute_view_target(
+            view,
+            p1=p1,
+            frame=out["working_frame"],
+            inspection_direction=out["d1_world"],
+            inspection_up=out["up_world"],
+            tcp_t_object=out["tcp_t_object"],
+        )
+        for name, view in out["views"].items()
+    }
+    return out
+
+
 def load_stage6_geometry(config_file: str | None = None) -> dict[str, Any]:
     """Load YAML and compute required inspection targets in world."""
     path = config_file or workcell_config_path()

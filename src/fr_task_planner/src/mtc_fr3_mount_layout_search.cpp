@@ -1,4 +1,5 @@
 #include "fr_task_planner/inspection_endpoint_candidates.hpp"
+#include "fr_task_planner/inspection_visibility.hpp"
 
 #include <algorithm>
 #include <chrono>
@@ -878,6 +879,26 @@ void addAxes(visualization_msgs::msg::MarkerArray& arr, int id0, const Eigen::Is
   addArrow(arr, id0 + 2, o, o + length * pose.linear().col(2), rgba(0.2f, 0.45f, 1.0f, 1.0f), ns);
 }
 
+void addCircle(visualization_msgs::msg::MarkerArray& arr, int id, const Eigen::Vector3d& center,
+               const Eigen::Vector3d& normal, double radius, const std_msgs::msg::ColorRGBA& color,
+               const std::string& ns)
+{
+  auto m = baseMarker(id, ns, visualization_msgs::msg::Marker::LINE_STRIP);
+  m.scale.x = 0.002;
+  m.color = color;
+  Eigen::Vector3d n = normal.normalized();
+  Eigen::Vector3d tmp = (std::abs(n.z()) < 0.9) ? Eigen::Vector3d::UnitZ() : Eigen::Vector3d::UnitX();
+  Eigen::Vector3d u = n.cross(tmp).normalized();
+  Eigen::Vector3d v = n.cross(u).normalized();
+  const int nseg = 32;
+  for (int k = 0; k <= nseg; ++k)
+  {
+    const double ang = 2.0 * M_PI * static_cast<double>(k) / static_cast<double>(nseg);
+    m.points.push_back(toPoint(center + radius * (std::cos(ang) * u + std::sin(ang) * v)));
+  }
+  arr.markers.push_back(m);
+}
+
 void addCube(visualization_msgs::msg::MarkerArray& arr, int id, const Eigen::Vector3d& center,
              const Eigen::Vector3d& size, const std_msgs::msg::ColorRGBA& color, const std::string& ns)
 {
@@ -919,6 +940,7 @@ struct SearchViz
   Eigen::Vector3d contact_world = Eigen::Vector3d::Zero();
   bool contact_valid = false;
   bool launched_rviz_markers = false;
+  bool show_visibility_audit = false;
 
   const ViewEval& focused(const MountResult& r) const
   {
@@ -1062,6 +1084,26 @@ struct SearchViz
     addText(arr, 74, p1 + Eigen::Vector3d(0.18, 0.05, 0.10), geom.str(),
             face_err_deg < 1.0 ? rgba(0.2f, 1.0f, 0.4f, 1.0f) : rgba(1.0f, 0.15f, 0.1f, 1.0f), 0.03,
             "inspection/orientation_audit");
+
+    if (show_visibility_audit)
+    {
+      addCircle(arr, 80, p1, n_actual, 0.0075, rgba(0.2f, 0.95f, 1.0f, 1.0f),
+                "inspection/target_roi");
+      addText(arr, 81, p1 + 0.05 * n_actual,
+              "TARGET SURFACE ROI\ntop_circle r=7.5 mm\n(true scale)",
+              rgba(0.3f, 0.95f, 1.0f, 1.0f), 0.028, "inspection/target_roi");
+      const Eigen::Vector3d cam_line_a(0.0, 0.10, 0.40);
+      const Eigen::Vector3d cam_line_b(0.0, 0.10, 1.60);
+      addArrow(arr, 82, cam_line_a, cam_line_b, rgba(1.0f, 0.55f, 0.1f, 1.0f),
+               "inspection/camera_constraint");
+      addText(arr, 83, Eigen::Vector3d(0.05, 0.10, 1.35),
+              "CAMERA CONSTRAINT LINE\nx=0  y=0.10 m\nz UNKNOWN\nNOT a camera pose",
+              rgba(1.0f, 0.65f, 0.2f, 1.0f), 0.03, "inspection/camera_constraint");
+      addText(arr, 84, Eigen::Vector3d(-0.15, 0.55, 1.35),
+              "CAMERA EXTRINSIC REQUIRED\nCAMERA_MODEL_INCOMPLETE\nNO LOS / FOV AUDIT\n"
+              "optical center not shown\n(would be invented)",
+              rgba(1.0f, 0.35f, 0.2f, 1.0f), 0.034, "inspection/visibility_hud");
+    }
 
     if (current)
     {
@@ -1649,6 +1691,78 @@ int main(int argc, char** argv)
     viz.holdFinal();
     shutdownSpinner(executor, spinner);
     return face_err_deg < 1.0 ? 0 : 4;
+  }
+
+  const bool visibility_audit_only = getBoolParam(node, "visibility_audit_only", false);
+  if (visibility_audit_only)
+  {
+    using fr_task_planner::cameraModelClass;
+    using fr_task_planner::incompleteVisibility;
+    using fr_task_planner::loadCameraModelFromWorkspace;
+    using fr_task_planner::sampleTopCircleDisk;
+    using fr_task_planner::sideViewRoiDef;
+    using fr_task_planner::topCircleRoiDef;
+    using fr_task_planner::visibilityOccluderLinks;
+    const auto cam = loadCameraModelFromWorkspace();
+    const Eigen::Vector3d n_actual =
+        (viz.canonical_c_object_world.linear() * viz.top_normal_local).normalized();
+    const Eigen::Vector3d n_expected(0.0, -1.0, 0.0);
+    const double face_dot = std::max(-1.0, std::min(1.0, n_actual.dot(n_expected)));
+    const double face_err_deg = std::acos(face_dot) * 180.0 / M_PI;
+    const bool ori_ok = face_err_deg < 1.0;
+    const auto roi_c = sampleTopCircleDisk(p1, n_actual, 0.0075);
+    const auto a_vis = incompleteVisibility("side_pos_y", ori_ok, 0);
+    const auto b_vis = incompleteVisibility("side_neg_y", ori_ok, 0);
+    const auto c_vis = incompleteVisibility("top_circle", ori_ok, static_cast<int>(roi_c.size()));
+    const auto a_roi = sideViewRoiDef("side_pos_y", "[0,1,0]");
+    const auto b_roi = sideViewRoiDef("side_neg_y", "[0,-1,0]");
+    const auto c_roi = topCircleRoiDef();
+    RCLCPP_INFO(node->get_logger(), "========== CAMERA VISIBILITY AUDIT (no P1.z search) ==========");
+    RCLCPP_INFO(node->get_logger(), "CAMERA_MODEL: %s", cameraModelClass(cam).c_str());
+    RCLCPP_INFO(node->get_logger(), "T_world_camera: MISSING");
+    RCLCPP_INFO(node->get_logger(), "intrinsics/FOV: MISSING");
+    RCLCPP_INFO(node->get_logger(), "top_circle ROI samples prepared=%zu (LOS not run)", roi_c.size());
+    RCLCPP_INFO(node->get_logger(), "WAITING FOR CAMERA MODEL. Height search will not resume.");
+    viz.phase = "VISIBILITY AUDIT";
+    viz.show_visibility_audit = true;
+    MountResult dummy;
+    dummy.p1z = p1.z();
+    viz.publishMarkers(&dummy, "CAMERA EXTRINSIC REQUIRED\nNO HEIGHT SEARCH");
+    std::ofstream yaml("/tmp/fr3_step11f_visibility_audit.yaml");
+    yaml << std::fixed << std::setprecision(9);
+    yaml << "status: CAMERA_MODEL_INCOMPLETE\n";
+    yaml << "search_paused: true\n";
+    yaml << "p1z_search_resumed: false\n";
+    yaml << "camera_model: " << cameraModelClass(cam) << "\n";
+    yaml << "camera_frame: \"\"\n";
+    yaml << "t_world_camera: missing\n";
+    yaml << "optical_axis: missing\n";
+    yaml << "intrinsics: missing\n";
+    yaml << "resolution: missing\n";
+    yaml << "fov: missing\n";
+    yaml << "xy_line_constraint: [0.0, 0.10]\n";
+    yaml << "xy_line_constraint_is_not_a_pose: true\n";
+    yaml << "column_center_used_as_camera: false\n";
+    yaml << "orientation_audit: PASS\n";
+    yaml << "n_top_world: [" << n_actual.x() << ", " << n_actual.y() << ", " << n_actual.z() << "]\n";
+    yaml << "top_circle_roi_samples: " << roi_c.size() << "\n";
+    yaml << "side_a_bounded_roi: " << (a_roi.bounded_roi_defined ? "true" : "false") << "\n";
+    yaml << "side_b_bounded_roi: " << (b_roi.bounded_roi_defined ? "true" : "false") << "\n";
+    yaml << "side_roi_gap: \"" << a_roi.gap << "\"\n";
+    yaml << "occluder_links:\n";
+    for (const auto& link : visibilityOccluderLinks())
+    {
+      yaml << "  - " << link << "\n";
+    }
+    yaml << "acm_does_not_imply_optical_transparency: true\n";
+    yaml << "view_A_inspection_valid: \"" << a_vis.inspection_valid << "\"\n";
+    yaml << "view_B_inspection_valid: \"" << b_vis.inspection_valid << "\"\n";
+    yaml << "view_C_inspection_valid: \"" << c_vis.inspection_valid << "\"\n";
+    yaml << "previous_heights: KINEMATIC_COLLISION_ONLY\n";
+    yaml.close();
+    viz.holdFinal();
+    shutdownSpinner(executor, spinner);
+    return 0;
   }
 
   const double p1z0 = p1.z();

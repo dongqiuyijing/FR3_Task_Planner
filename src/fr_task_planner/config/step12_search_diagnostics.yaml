@@ -1,0 +1,49 @@
+status: FAIL
+failure_classification: VISIBILITY_BLOCKED
+p1: [0.000000000, 0.400000000, 1.200000000]
+camera_design_position: [0.000000000, 0.100000000, 1.200000000]
+camera_forward: [0, 1, 0]
+order: A,B,C
+roll_step_deg: 5.000000000
+top_k: 10
+beam_width: 5
+edge_attempts: 3
+search_planning_time: 3.000000000
+prefix_ok: true
+prefix_time: 6.566537617
+view_A:
+  roll_samples: 72
+  orientation_valid: 72
+  raw_ik: 201
+  joint_valid: 201
+  collision_free: 139
+  visibility_valid: 139
+  vis_center_blocked: 0
+  vis_fraction_blocked: 0
+  vis_occluders: none
+  dominant_pair: mounting_column <-> upperarm_link
+  best_column_distance: 0.074799999
+view_B:
+  roll_samples: 72
+  orientation_valid: 72
+  raw_ik: 209
+  joint_valid: 209
+  collision_free: 147
+  visibility_valid: 147
+  vis_center_blocked: 0
+  vis_fraction_blocked: 0
+  vis_occluders: none
+  dominant_pair: mounting_column <-> upperarm_link
+  best_column_distance: 0.074799999
+view_C:
+  roll_samples: 72
+  orientation_valid: 72
+  raw_ik: 516
+  joint_valid: 516
+  collision_free: 134
+  visibility_valid: 0
+  vis_center_blocked: 66
+  vis_fraction_blocked: 0
+  vis_occluders: gripper_base_link,rail_155,wrist2_link,wrist3_link
+  dominant_pair: forearm_link <-> mounting_column
+  best_column_distance: 0.019519775

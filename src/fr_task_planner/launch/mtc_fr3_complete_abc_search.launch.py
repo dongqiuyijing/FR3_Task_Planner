@@ -27,12 +27,16 @@ from inspection_view_geometry import (  # noqa: E402
     generate_roll_candidates,
     load_stage6_geometry,
     pose_in_planning_frame,
+    retarget_inspection_p1,
 )
 from stage4_pregrasp import _pose_to_dict, compute_stage4_pregrasp_params  # noqa: E402
 
 
 _ROS_DOMAIN_ID = "77"
 _VIEWS = ("side_pos_y", "side_neg_y", "top_circle")
+# User-fixed for STEP 12. Do not search. Do not write stage4_config.yaml.
+_FIXED_P1_Z = 1.20
+_CAMERA_DESIGN = (0.0, 0.10, 1.20)
 
 
 def _flatten_rolls(geo, roll_step_deg: float, planning_frame: str) -> dict:
@@ -115,7 +119,10 @@ def _launch_nodes(context, *args, **kwargs):
     config_file = LaunchConfiguration("config_file").perform(context)
     roll_step_deg = float(LaunchConfiguration("roll_step_deg").perform(context))
     params = compute_stage4_pregrasp_params(config_file or None)
-    geo = load_stage6_geometry(config_file or None)
+    geo = retarget_inspection_p1(
+        load_stage6_geometry(config_file or None),
+        (0.0, 0.4, _FIXED_P1_Z),
+    )
     params["roll_step_deg"] = roll_step_deg
     params["max_ik_solutions_per_pose"] = int(
         LaunchConfiguration("max_ik_solutions_per_pose").perform(context)
@@ -123,24 +130,18 @@ def _launch_nodes(context, *args, **kwargs):
     params["min_ik_solution_distance"] = float(
         LaunchConfiguration("min_ik_solution_distance").perform(context)
     )
-    params["path_attempts"] = int(LaunchConfiguration("path_attempts").perform(context))
-    params["skip_coarse_search"] = (
-        LaunchConfiguration("skip_coarse_search").perform(context).lower() == "true"
+    params["top_k"] = int(LaunchConfiguration("top_k").perform(context))
+    params["beam_width"] = int(LaunchConfiguration("beam_width").perform(context))
+    params["edge_attempts"] = int(LaunchConfiguration("edge_attempts").perform(context))
+    params["prefix_retries"] = int(LaunchConfiguration("prefix_retries").perform(context))
+    params["complete_candidate_budget"] = int(
+        LaunchConfiguration("complete_candidate_budget").perform(context)
     )
-    params["validate_only_p1z"] = float(
-        LaunchConfiguration("validate_only_p1z").perform(context)
-    )
-    params["orientation_audit_only"] = (
-        LaunchConfiguration("orientation_audit_only").perform(context).lower() == "true"
-    )
-    params["visibility_audit_only"] = (
-        LaunchConfiguration("visibility_audit_only").perform(context).lower() == "true"
+    params["search_planning_time"] = float(
+        LaunchConfiguration("search_planning_time").perform(context)
     )
     params["visualize_search"] = (
         LaunchConfiguration("visualize_search").perform(context).lower() == "true"
-    )
-    params["search_visualization_delay_sec"] = float(
-        LaunchConfiguration("search_visualization_delay_sec").perform(context)
     )
     params["visualization_hold_seconds"] = float(
         LaunchConfiguration("visualization_hold_seconds").perform(context)
@@ -148,9 +149,10 @@ def _launch_nodes(context, *args, **kwargs):
     params["diagnostic_output_path"] = LaunchConfiguration("diagnostic_output_path").perform(
         context
     )
-    params["best_layout_output_path"] = LaunchConfiguration("best_layout_output_path").perform(
-        context
-    )
+    params["winner_output_path"] = LaunchConfiguration("winner_output_path").perform(context)
+    params["camera_design_x"] = _CAMERA_DESIGN[0]
+    params["camera_design_y"] = _CAMERA_DESIGN[1]
+    params["camera_design_z"] = _CAMERA_DESIGN[2]
     params.update(_env_bounds(config_file))
     params.update(cpp_inspection_vectors(geo))
     planning_frame = str(params.get("planning_frame", "base_link"))
@@ -165,6 +167,13 @@ def _launch_nodes(context, *args, **kwargs):
         params[f"{name}_up_x"] = float(view.up_in_object[0])
         params[f"{name}_up_y"] = float(view.up_in_object[1])
         params[f"{name}_up_z"] = float(view.up_in_object[2])
+        params.update(
+            _pose_to_dict(
+                f"{name}_canonical_object",
+                pose_in_planning_frame(geo["targets"][name].object_pose, geo, planning_frame),
+                planning_frame,
+            )
+        )
     params.update(_flatten_rolls(geo, roll_step_deg, planning_frame))
 
     moveit_config = (
@@ -184,8 +193,8 @@ def _launch_nodes(context, *args, **kwargs):
     rviz_config = os.path.join(pkg_share, "config", "mtc_workcell_demo.rviz")
     search = Node(
         package="fr_task_planner",
-        executable="fr3_mtc_mount_layout_search",
-        name="fr3_mtc_mount_layout_search",
+        executable="fr3_mtc_complete_abc_search",
+        name="fr3_mtc_complete_abc_search",
         output="screen",
         parameters=[
             moveit_config.robot_description,
@@ -204,7 +213,7 @@ def _launch_nodes(context, *args, **kwargs):
     rviz_node = Node(
         package="rviz2",
         executable="rviz2",
-        name="fr3_step11f_search_rviz",
+        name="fr3_step12_search_rviz",
         output="screen",
         arguments=["-d", rviz_config],
         parameters=[{"use_sim_time": LaunchConfiguration("use_sim_time")}],
@@ -214,9 +223,12 @@ def _launch_nodes(context, *args, **kwargs):
         LogInfo(
             msg="\n".join(
                 [
-                    "========== STEP 11F P1 WORLD-Z HEIGHT FEASIBILITY ==========",
+                    "========== STEP 12 FIXED ABC COMPLETE-TASK SEARCH ==========",
                     f"ROS_DOMAIN_ID={_ROS_DOMAIN_ID}",
-                    "DIAGNOSTIC ONLY. P1.z only. Does not modify stage4_config.yaml.",
+                    "PLAN / RViz ONLY. No Gazebo execute. No real robot.",
+                    "P1 fixed: [0.0, 0.4, 1.20]  (YAML z not rewritten)",
+                    "camera design: [0.0, 0.10, 1.20] forward +Y  (NOT calibrated)",
+                    "order: A → B → C",
                     f"roll step: {roll_step_deg} deg",
                     f"visualize_search: {visualize}",
                 ]
@@ -241,6 +253,9 @@ def generate_launch_description():
         )
     )
     control_share = get_package_share_directory("fr_control")
+    default_winner = os.path.expanduser(
+        "~/fr_task_ws/src/fr_task_planner/config/step12_best_sampled_complete_task.yaml"
+    )
     return LaunchDescription(
         [
             SetEnvironmentVariable(name="ROS_DOMAIN_ID", value=_ROS_DOMAIN_ID),
@@ -248,27 +263,24 @@ def generate_launch_description():
             DeclareLaunchArgument("start_stage4", default_value="true"),
             DeclareLaunchArgument("headless", default_value="false"),
             DeclareLaunchArgument("visualize_search", default_value="true"),
-            DeclareLaunchArgument("search_visualization_delay_sec", default_value="0.7"),
-            DeclareLaunchArgument("visualization_hold_seconds", default_value="8.0"),
+            DeclareLaunchArgument("visualization_hold_seconds", default_value="20.0"),
             DeclareLaunchArgument("moveit_delay", default_value="8.0"),
             DeclareLaunchArgument("search_delay", default_value="18.0"),
             DeclareLaunchArgument("config_file", default_value=default_config),
             DeclareLaunchArgument("roll_step_deg", default_value="5.0"),
             DeclareLaunchArgument("max_ik_solutions_per_pose", default_value="8"),
             DeclareLaunchArgument("min_ik_solution_distance", default_value="0.1"),
-            DeclareLaunchArgument("path_attempts", default_value="5"),
-            DeclareLaunchArgument("skip_coarse_search", default_value="false"),
-            DeclareLaunchArgument("validate_only_p1z", default_value="0.0"),
-            DeclareLaunchArgument("orientation_audit_only", default_value="false"),
-            DeclareLaunchArgument("visibility_audit_only", default_value="false"),
+            DeclareLaunchArgument("top_k", default_value="10"),
+            DeclareLaunchArgument("beam_width", default_value="5"),
+            DeclareLaunchArgument("edge_attempts", default_value="3"),
+            DeclareLaunchArgument("prefix_retries", default_value="5"),
+            DeclareLaunchArgument("complete_candidate_budget", default_value="40"),
+            DeclareLaunchArgument("search_planning_time", default_value="3.0"),
             DeclareLaunchArgument(
                 "diagnostic_output_path",
-                default_value="/tmp/fr3_step11f_p1z.yaml",
+                default_value="/tmp/fr3_step12_search.yaml",
             ),
-            DeclareLaunchArgument(
-                "best_layout_output_path",
-                default_value="/tmp/fr3_step11f_best_p1z.yaml",
-            ),
+            DeclareLaunchArgument("winner_output_path", default_value=default_winner),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(control_share, "launch", "stage4_full.launch.py")
