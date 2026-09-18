@@ -569,3 +569,44 @@ python3 ~/fr_task_ws/src/fr_task_planner/launch/stage8_transition_matrix.py
 Authoritative STEP 8 edge result is `/tmp/fr3_step8_<src>_<tgt>.yaml`
 (`result` / `reachable` / `complete_solution_count`), not launch exit code.
 Authoritative STEP 11B dump is `/tmp/fr3_step11b_top_circle.yaml`.
+
+# STEP 11C — Simulation Visualization Of The Current Planner
+
+Show what the current planner actually does. Not STEP 12. `top_circle` remains
+unreachable and is never executed.
+
+Default sequence (real MTC + OMPL + Pilz, not a handcrafted joint path):
+
+```text
+Home → PreGrasp → Grasp → Attach(predicted) → Lift → side_pos_y → side_neg_y
+```
+
+`top_circle` is diagnostic only: target markers + colliding IK ghost +
+`forearm_link ↔ mounting_column` contact.
+
+Isolated domain: `ROS_DOMAIN_ID=77`. Does not start `real_bringup`. Gazebo
+execution is **not implemented**; RViz plays the planned solution.
+
+```bash
+cd ~/fr_task_ws
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+export ROS_DOMAIN_ID=77
+ros2 launch fr_task_planner mtc_fr3_sim_visualization.launch.py
+```
+
+If Stage 4 Gazebo / MoveIt is already running on domain 77:
+
+```bash
+export ROS_DOMAIN_ID=77
+ros2 launch fr_task_planner mtc_fr3_sim_visualization.launch.py start_stage4:=false visualizer_delay:=0.0
+```
+
+`execute_gazebo:=true` is rejected / not implemented. It never sends trajectories
+to a real FR3.
+
+RViz MarkerArray: `/fr3_vis/markers`
+Collision ghost: `/fr3_vis/collision_robot_state`
+MTC animation: `/solution`
+Dump: `/tmp/fr3_step11c_visualization.yaml`

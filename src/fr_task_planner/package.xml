@@ -21,6 +21,8 @@
   <depend>moveit_task_constructor_core</depend>
   <depend>moveit_task_constructor_msgs</depend>
   <depend>trajectory_msgs</depend>
+  <depend>visualization_msgs</depend>
+  <depend>std_msgs</depend>
 
   <exec_depend>fairino3_v6_moveit2_config</exec_depend>
   <exec_depend>fr_control</exec_depend>
