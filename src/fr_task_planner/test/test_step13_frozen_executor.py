@@ -139,6 +139,37 @@ class Step13GateTest(unittest.TestCase):
         self.assertTrue(True and "I_UNDERSTAND_THIS_WILL_MOVE_THE_REAL_ROBOT" == _CONFIRM)
 
 
+class Step13GripperLaunchTest(unittest.TestCase):
+    def test_launch_exposes_gripper_timeout_and_ping_only(self) -> None:
+        path = os.path.join(_PKG, "launch", "fr3_real_frozen_trajectory_executor.launch.py")
+        with open(path, encoding="utf-8") as handle:
+            text = handle.read()
+        self.assertIn('DeclareLaunchArgument("gripper_timeout_sec", default_value="15.0")', text)
+        self.assertIn(
+            'DeclareLaunchArgument("gripper_post_close_wait_sec", default_value="0.5")', text
+        )
+        self.assertIn('DeclareLaunchArgument("gripper_ping_only", default_value="false")', text)
+        self.assertIn("gripper_rot_num", text)
+        self.assertIn("gripper_rot_vel", text)
+        self.assertIn("gripper_rot_torque", text)
+        self.assertNotIn("ActGripper", text)
+
+    def test_local_executor_yaml_rot_defaults_match_python(self) -> None:
+        path = os.path.join(_PKG, "config", "fr3_real_executor.yaml")
+        data = _load(path)
+        self.assertEqual(int(data["gripper_id"]), 1)
+        self.assertEqual(int(data["gripper_close_position"]), 85)
+        self.assertEqual(int(data["gripper_velocity"]), 20)
+        self.assertEqual(int(data["gripper_force"]), 20)
+        self.assertEqual(int(data["gripper_max_time_ms"]), 5000)
+        self.assertEqual(int(data["gripper_block"]), 1)
+        self.assertEqual(int(data["gripper_type"]), 0)
+        self.assertEqual(float(data["gripper_rot_num"]), 0.0)
+        self.assertEqual(int(data["gripper_rot_vel"]), 0)
+        self.assertEqual(int(data["gripper_rot_torque"]), 0)
+        self.assertEqual(float(data["gripper_timeout_sec"]), 15.0)
+
+
 class Step13CppBinaryTest(unittest.TestCase):
     def test_cpp_unit_binary_if_present(self) -> None:
         candidates = [

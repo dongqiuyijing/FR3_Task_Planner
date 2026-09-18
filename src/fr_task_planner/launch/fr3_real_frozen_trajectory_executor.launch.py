@@ -59,11 +59,16 @@ def _discover_controller() -> dict:
 def _discover_gripper() -> dict:
     discovered = {
         "gripper_service_name": "/fairino_gripper/command",
+        "gripper_id": 1,
         "gripper_close_position": 85,
         "gripper_velocity": 20,
         "gripper_force": 20,
         "gripper_max_time_ms": 5000,
         "gripper_block": 1,
+        "gripper_type": 0,
+        "gripper_rot_num": 0.0,
+        "gripper_rot_vel": 0,
+        "gripper_rot_torque": 0,
         "source": "fallback",
     }
     try:
@@ -84,6 +89,9 @@ def _discover_gripper() -> dict:
             "gripper_max_time_ms": int(real.get("max_time_ms", 5000)),
             "gripper_block": int(real.get("block", 1)),
             "gripper_type": int(real.get("type", 0)),
+            "gripper_rot_num": float(real.get("rot_num", 0.0)),
+            "gripper_rot_vel": int(real.get("rot_vel", 0)),
+            "gripper_rot_torque": int(real.get("rot_torque", 0)),
             "source": path,
         }
     )
@@ -154,6 +162,17 @@ def _launch_nodes(context, *args, **kwargs):
         "gripper_max_time_ms": int(gripper.get("gripper_max_time_ms", 5000)),
         "gripper_block": int(gripper.get("gripper_block", 1)),
         "gripper_type": int(gripper.get("gripper_type", 0)),
+        "gripper_rot_num": float(gripper.get("gripper_rot_num", 0.0)),
+        "gripper_rot_vel": int(gripper.get("gripper_rot_vel", 0)),
+        "gripper_rot_torque": int(gripper.get("gripper_rot_torque", 0)),
+        "gripper_timeout_sec": float(
+            LaunchConfiguration("gripper_timeout_sec").perform(context)
+        ),
+        "gripper_post_close_wait_sec": float(
+            LaunchConfiguration("gripper_post_close_wait_sec").perform(context)
+        ),
+        "gripper_ping_only": LaunchConfiguration("gripper_ping_only").perform(context).lower()
+        == "true",
         "planning_group": str(local_cfg.get("planning_group", "fairino3_v6_group")),
         "attach_link": str(local_cfg.get("attach_link", "gripper_tcp")),
         "object_name": str(local_cfg.get("object_name", "small_part")),
@@ -212,6 +231,9 @@ def generate_launch_description():
             DeclareLaunchArgument("joint_settle_poll_period_sec", default_value="0.10"),
             DeclareLaunchArgument("joint_settle_required_samples", default_value="3"),
             DeclareLaunchArgument("gripper_enabled", default_value="true"),
+            DeclareLaunchArgument("gripper_timeout_sec", default_value="15.0"),
+            DeclareLaunchArgument("gripper_post_close_wait_sec", default_value="0.5"),
+            DeclareLaunchArgument("gripper_ping_only", default_value="false"),
             DeclareLaunchArgument("real_robot_confirmation", default_value=""),
             OpaqueFunction(function=_launch_nodes),
         ]

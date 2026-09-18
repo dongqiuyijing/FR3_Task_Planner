@@ -167,6 +167,8 @@ std::string phaseName(ExecutorPhase phase)
       return "PLAN_CURRENT_TO_HOME";
     case ExecutorPhase::WAIT_USER_EXECUTION_GATE:
       return "WAIT_USER_EXECUTION_GATE";
+    case ExecutorPhase::GRIPPER_PING_PREFLIGHT:
+      return "GRIPPER_PING_PREFLIGHT";
     case ExecutorPhase::EXECUTE_CURRENT_TO_HOME:
       return "EXECUTE_CURRENT_TO_HOME";
     case ExecutorPhase::VERIFY_HOME:
@@ -245,6 +247,115 @@ bool validSpeedScale(double scale, std::string& error)
 double actionTimeoutSec(double scaled_duration, double factor, double margin)
 {
   return std::max(1.0, scaled_duration) * factor + margin;
+}
+
+namespace
+{
+std::string formatElapsedSec(double elapsed)
+{
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(3);
+  oss << elapsed;
+  return oss.str();
+}
+}  // namespace
+
+GripperBridgeRequestFields makeGripperCloseRequest(const ExecutorConfig& cfg)
+{
+  GripperBridgeRequestFields req;
+  req.command = kGripperCommandMove;
+  req.gripper_id = cfg.gripper_id;
+  req.position = cfg.gripper_close_position;
+  req.velocity = cfg.gripper_velocity;
+  req.force = cfg.gripper_force;
+  req.max_time_ms = cfg.gripper_max_time_ms;
+  req.block = cfg.gripper_block;
+  req.gripper_type = cfg.gripper_type;
+  req.rot_num = cfg.gripper_rot_num;
+  req.rot_vel = cfg.gripper_rot_vel;
+  req.rot_torque = cfg.gripper_rot_torque;
+  return req;
+}
+
+GripperBridgeRequestFields makeGripperPingRequest(const ExecutorConfig& cfg)
+{
+  GripperBridgeRequestFields req = makeGripperCloseRequest(cfg);
+  req.command = kGripperCommandPing;
+  req.position = 0;
+  return req;
+}
+
+std::string formatGripperRequestLog(const GripperBridgeRequestFields& req)
+{
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(6);
+  oss << "GRIPPER REQUEST command=" << req.command << " gripper_id=" << req.gripper_id
+      << " position=" << req.position << " velocity=" << req.velocity << " force=" << req.force
+      << " max_time_ms=" << req.max_time_ms << " block=" << req.block
+      << " gripper_type=" << req.gripper_type << " rot_num=" << req.rot_num
+      << " rot_vel=" << req.rot_vel << " rot_torque=" << req.rot_torque;
+  return oss.str();
+}
+
+std::string formatGripperResponseLog(int error_code, const std::string& message, double elapsed_sec,
+                                     bool response_received)
+{
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(3);
+  oss << "GRIPPER RESPONSE error_code=" << error_code << " message=\"" << message
+      << "\" elapsed_sec=" << elapsed_sec
+      << " response_received=" << (response_received ? "YES" : "NO");
+  return oss.str();
+}
+
+GripperCallOutcome classifyGripperCall(bool service_available, bool timed_out, bool null_response,
+                                       int error_code, const std::string& message,
+                                       double elapsed_sec, const char* nonzero_prefix)
+{
+  GripperCallOutcome out;
+  out.error_code = error_code;
+  out.message = message;
+  out.elapsed_sec = elapsed_sec;
+  const char* prefix =
+      (nonzero_prefix && nonzero_prefix[0] != '\0') ? nonzero_prefix : kErrorGripperCloseFailed;
+
+  if (!service_available)
+  {
+    out.kind = GripperCallKind::ServiceUnavailable;
+    out.error = std::string(kErrorGripperServiceUnavailable) + " elapsed_sec=" +
+                formatElapsedSec(elapsed_sec);
+    return out;
+  }
+  if (timed_out)
+  {
+    out.kind = GripperCallKind::Timeout;
+    out.error =
+        std::string(kErrorGripperServiceTimeout) + " elapsed=" + formatElapsedSec(elapsed_sec);
+    return out;
+  }
+  if (null_response)
+  {
+    out.kind = GripperCallKind::NullResponse;
+    out.error =
+        std::string(kErrorGripperNullResponse) + " elapsed_sec=" + formatElapsedSec(elapsed_sec);
+    return out;
+  }
+  out.response_received = true;
+  if (error_code != 0)
+  {
+    out.kind = GripperCallKind::BridgeError;
+    std::ostringstream oss;
+    oss << prefix << " " << kErrorGripperBridgeError << " error_code=" << error_code
+        << " message=\"" << message << "\" elapsed_sec=" << formatElapsedSec(elapsed_sec);
+    out.error = oss.str();
+    return out;
+  }
+  out.ok = true;
+  out.kind = GripperCallKind::Success;
+  return out;
 }
 
 double timeFromStartSec(const TrajectoryPointRecord& pt)
@@ -916,6 +1027,23 @@ ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajec
     push(ExecutorPhase::COMPLETE);
     trace.ok = true;
     return trace;
+  }
+
+  if (cfg.gripper_enabled && hooks.pingGripper)
+  {
+    push(ExecutorPhase::GRIPPER_PING_PREFLIGHT);
+    trace.events.push_back("GRIPPER_PING_PREFLIGHT");
+    auto ping = hooks.pingGripper();
+    if (ping.sent)
+    {
+      ++trace.gripper_commands_sent;
+    }
+    if (!ping.success)
+    {
+      abortTo(trace, ping.error.empty() ? kErrorGripperPingFailed : ping.error);
+      return trace;
+    }
+    trace.events.push_back("GRIPPER_PING_PASS");
   }
 
   auto refreshOk = [&]() -> bool {

@@ -143,12 +143,15 @@ struct MockRobot
 {
   JointSnapshot joints = snapFrom(kStep12cHomeRad);
   bool gripper_ok = true;
+  bool ping_ok = true;
+  bool ping_enabled = false;
   bool attach_ok = true;
   bool restore_ok = true;
   bool controller_ok = true;
   std::string fail_segment;
   int send_calls = 0;
   int gripper_calls = 0;
+  int ping_calls = 0;
   int attach_calls = 0;
   std::vector<std::string> sent;
   std::vector<std::string> events;
@@ -203,6 +206,23 @@ struct MockRobot
       r.success = true;
       return r;
     };
+    if (ping_enabled)
+    {
+      h.pingGripper = [this]() {
+        SendResult r;
+        r.attempted = true;
+        ++ping_calls;
+        r.sent = true;
+        events.push_back("GRIPPER_PING_PREFLIGHT");
+        if (!ping_ok)
+        {
+          r.error = kErrorGripperPingFailed;
+          return r;
+        }
+        r.success = true;
+        return r;
+      };
+    }
     h.attachObject = [this]() {
       SendResult r;
       r.attempted = true;
@@ -504,8 +524,9 @@ int main(int argc, char** argv)
     lift_sent = lift_sent || s == kLogicalGraspToLift;
   }
   check(t20.aborted && t20.abort_reason.find(kErrorGripperCloseFailed) != std::string::npos &&
-            !lift_sent,
+            !lift_sent && robot5.attach_calls == 0,
         "TEST20_gripper_failure_blocks_lift");
+  check(!lift_sent && robot5.attach_calls == 0, "GRIPPER_G_close_failure_blocks_attach_and_lift");
 
   MockRobot robot6;
   robot6.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
@@ -677,6 +698,110 @@ int main(int argc, char** argv)
     r.seq = { good, good, good };
     auto s = waitForJointConvergence("J", arm, grasp_target, 0.02, settleCfg(), r.hooks());
     check(s.ok && s.motion_commands_sent == 0 && r.send_calls == 0, "SETTLE_J_helper_sends_no_motion");
+  }
+
+  {
+    auto success = classifyGripperCall(true, false, false, 0, "ok", 1.2, kErrorGripperCloseFailed);
+    check(success.ok && success.kind == GripperCallKind::Success, "GRIPPER_A_success");
+  }
+  {
+    auto fail = classifyGripperCall(true, false, false, 123, "MoveGripper failed", 9.0,
+                                    kErrorGripperCloseFailed);
+    check(!fail.ok && fail.kind == GripperCallKind::BridgeError &&
+              fail.error.find(kErrorGripperCloseFailed) != std::string::npos &&
+              fail.error.find("123") != std::string::npos &&
+              fail.error.find("MoveGripper failed") != std::string::npos &&
+              fail.error.find(kErrorGripperBridgeError) != std::string::npos,
+          "GRIPPER_B_bridge_error_keeps_code_and_message");
+  }
+  {
+    auto timeout = classifyGripperCall(true, true, false, 0, "", 15.002, kErrorGripperCloseFailed);
+    check(!timeout.ok && timeout.kind == GripperCallKind::Timeout &&
+              timeout.error.find(kErrorGripperServiceTimeout) != std::string::npos &&
+              timeout.error.find("15.002") != std::string::npos &&
+              timeout.error.find(kErrorGripperCloseFailed) == std::string::npos,
+          "GRIPPER_C_service_timeout");
+  }
+  {
+    auto null_resp =
+        classifyGripperCall(true, false, true, 0, "", 0.4, kErrorGripperCloseFailed);
+    check(!null_resp.ok && null_resp.kind == GripperCallKind::NullResponse &&
+              null_resp.error.find(kErrorGripperNullResponse) != std::string::npos,
+          "GRIPPER_D_null_response");
+  }
+  {
+    auto unavailable =
+        classifyGripperCall(false, false, false, 0, "", 2.0, kErrorGripperCloseFailed);
+    check(!unavailable.ok && unavailable.kind == GripperCallKind::ServiceUnavailable &&
+              unavailable.error.find(kErrorGripperServiceUnavailable) != std::string::npos,
+          "GRIPPER_UNAVAILABLE");
+  }
+
+  {
+    MockRobot ping_ok_robot;
+    ping_ok_robot.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                                      kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    ping_ok_robot.ping_enabled = true;
+    ping_ok_robot.ping_ok = true;
+    auto t_ping = runFrozenExecutor(execCfg(), dummy, ping_ok_robot.hooks());
+    bool ping_pass = false;
+    for (const auto& e : t_ping.events)
+    {
+      ping_pass = ping_pass || e == "GRIPPER_PING_PASS";
+    }
+    check(t_ping.ok && ping_ok_robot.ping_calls == 1 && ping_pass, "GRIPPER_E_ping_preflight_pass");
+  }
+  {
+    MockRobot ping_fail_robot;
+    ping_fail_robot.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1],
+                                        kStep12cHomeRad[2], kStep12cHomeRad[3], kStep12cHomeRad[4],
+                                        kStep12cHomeRad[5] });
+    ping_fail_robot.ping_enabled = true;
+    ping_fail_robot.ping_ok = false;
+    auto t_ping_fail = runFrozenExecutor(execCfg(), dummy, ping_fail_robot.hooks());
+    check(t_ping_fail.aborted && ping_fail_robot.send_calls == 0 &&
+              ping_fail_robot.gripper_calls == 0 && ping_fail_robot.attach_calls == 0 &&
+              t_ping_fail.abort_reason.find(kErrorGripperPingFailed) != std::string::npos,
+          "GRIPPER_F_ping_failure_blocks_sequence");
+  }
+  {
+    ExecutorConfig dry_g;
+    dry_g.trajectory_speed_scale = 1.0;
+    MockRobot dry_robot;
+    auto dry_g_trace = runFrozenExecutor(dry_g, dummy, dry_robot.hooks());
+    check(dry_g_trace.dry_run && dry_g_trace.ok && dry_robot.send_calls == 0 &&
+              dry_robot.gripper_calls == 0 && dry_robot.ping_calls == 0 &&
+              dry_g_trace.gripper_commands_sent == 0,
+          "GRIPPER_H_execute_false_zero_gripper_commands");
+  }
+  {
+    ExecutorConfig cfg;
+    cfg.gripper_id = 1;
+    cfg.gripper_close_position = 85;
+    cfg.gripper_velocity = 20;
+    cfg.gripper_force = 20;
+    cfg.gripper_max_time_ms = 5000;
+    cfg.gripper_block = 1;
+    cfg.gripper_type = 0;
+    cfg.gripper_rot_num = 0.0;
+    cfg.gripper_rot_vel = 0;
+    cfg.gripper_rot_torque = 0;
+    auto close_req = makeGripperCloseRequest(cfg);
+    auto ping_req = makeGripperPingRequest(cfg);
+    check(close_req.command == kGripperCommandMove && close_req.gripper_id == 1 &&
+              close_req.position == 85 && close_req.velocity == 20 && close_req.force == 20 &&
+              close_req.max_time_ms == 5000 && close_req.block == 1 && close_req.gripper_type == 0 &&
+              close_req.rot_num == 0.0 && close_req.rot_vel == 0 && close_req.rot_torque == 0 &&
+              ping_req.command == kGripperCommandPing && ping_req.position == 0 &&
+              ping_req.gripper_id == 1 && ping_req.rot_num == 0.0 && ping_req.rot_vel == 0 &&
+              ping_req.rot_torque == 0,
+          "GRIPPER_I_request_fields_match_config");
+    const std::string req_log = formatGripperRequestLog(close_req);
+    check(req_log.find("command=move") != std::string::npos &&
+              req_log.find("rot_num=") != std::string::npos &&
+              req_log.find("rot_vel=") != std::string::npos &&
+              req_log.find("rot_torque=") != std::string::npos,
+          "GRIPPER_I_request_log_includes_rot_fields");
   }
 
   std::cout << "passed=" << g_passes << " failed=" << g_fails << "\n";

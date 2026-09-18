@@ -188,10 +188,29 @@ public:
     RCLCPP_INFO(node_->get_logger(), "action: %s", cfg_.trajectory_action_name.c_str());
     RCLCPP_INFO(node_->get_logger(), "controller config source: %s",
                 getString(node_, "controller_config_source", "parameter/default").c_str());
-    RCLCPP_INFO(node_->get_logger(), "gripper: %s", cfg_.gripper_service_name.c_str());
-    RCLCPP_INFO(node_->get_logger(), "gripper config source: %s",
+    RCLCPP_INFO(node_->get_logger(), "GRIPPER CONFIG SOURCE: %s",
                 getString(node_, "gripper_config_source", "parameter/default").c_str());
+    RCLCPP_INFO(node_->get_logger(), "gripper service: %s", cfg_.gripper_service_name.c_str());
+    RCLCPP_INFO(node_->get_logger(), "gripper id: %d", cfg_.gripper_id);
+    RCLCPP_INFO(node_->get_logger(), "gripper close_position: %d", cfg_.gripper_close_position);
+    RCLCPP_INFO(node_->get_logger(), "gripper velocity: %d", cfg_.gripper_velocity);
+    RCLCPP_INFO(node_->get_logger(), "gripper force: %d", cfg_.gripper_force);
+    RCLCPP_INFO(node_->get_logger(), "gripper max_time_ms: %d", cfg_.gripper_max_time_ms);
+    RCLCPP_INFO(node_->get_logger(), "gripper block: %d", cfg_.gripper_block);
+    RCLCPP_INFO(node_->get_logger(), "gripper type: %d", cfg_.gripper_type);
+    RCLCPP_INFO(node_->get_logger(), "gripper rot_num: %.6f", cfg_.gripper_rot_num);
+    RCLCPP_INFO(node_->get_logger(), "gripper rot_vel: %d", cfg_.gripper_rot_vel);
+    RCLCPP_INFO(node_->get_logger(), "gripper rot_torque: %d", cfg_.gripper_rot_torque);
+    RCLCPP_INFO(node_->get_logger(), "gripper timeout_sec: %.3f", cfg_.gripper_timeout_sec);
+    RCLCPP_INFO(node_->get_logger(), "gripper post_close_wait_sec: %.3f",
+                cfg_.gripper_post_close_wait_sec);
+    RCLCPP_INFO(node_->get_logger(), "gripper_ping_only: %s",
+                cfg_.gripper_ping_only ? "true" : "false");
     RCLCPP_INFO(node_->get_logger(), "motion gate: %s", gate_reason.c_str());
+    if (cfg_.gripper_ping_only)
+    {
+      return runGripperPingOnly();
+    }
     if (motion)
     {
       RCLCPP_ERROR(node_->get_logger(),
@@ -301,6 +320,7 @@ public:
       return sendSegment(logical, seg);
     };
     hooks.closeGripper = [this]() { return closeGripper(); };
+    hooks.pingGripper = [this]() { return pingGripper(true); };
     hooks.attachObject = [this]() { return attachObject(); };
     hooks.restoreTableCollision = [this]() { return restoreTableCollision(); };
 
@@ -359,6 +379,10 @@ private:
     cfg_.gripper_max_time_ms = getInt(node_, "gripper_max_time_ms", 5000);
     cfg_.gripper_block = getInt(node_, "gripper_block", 1);
     cfg_.gripper_type = getInt(node_, "gripper_type", 0);
+    cfg_.gripper_rot_num = getDouble(node_, "gripper_rot_num", 0.0);
+    cfg_.gripper_rot_vel = getInt(node_, "gripper_rot_vel", 0);
+    cfg_.gripper_rot_torque = getInt(node_, "gripper_rot_torque", 0);
+    cfg_.gripper_ping_only = getBool(node_, "gripper_ping_only", false);
   }
 
   bool motionGateOpen() const
@@ -680,43 +704,133 @@ private:
     return result;
   }
 
-  SendResult closeGripper()
+  int runGripperPingOnly()
   {
+    RCLCPP_INFO(node_->get_logger(),
+                "MODE: GRIPPER_PING_ONLY (non-motion ping; no MoveGripper/ActGripper/arm motion)");
+    ensureGripperClient();
+    auto ping = pingGripper(false);
+    RCLCPP_INFO(node_->get_logger(), "gripper ping-only ok=%s error=%s",
+                ping.success ? "true" : "false", ping.error.c_str());
+    RCLCPP_INFO(node_->get_logger(), "commands sent to robot: %d", motion_commands_sent_);
+    RCLCPP_INFO(node_->get_logger(), "commands sent to gripper: %d", gripper_commands_sent_);
+    if (motion_commands_sent_ != 0)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "ping-only leaked a robot motion command");
+      return 2;
+    }
+    return ping.success ? 0 : 1;
+  }
+
+  void ensureGripperClient()
+  {
+    if (!gripper_client_)
+    {
+      gripper_client_ =
+          node_->create_client<fairino_msgs::srv::GripperBridge>(cfg_.gripper_service_name);
+    }
+  }
+
+  void fillGripperRequest(fairino_msgs::srv::GripperBridge::Request& req,
+                          const fr_task_planner::GripperBridgeRequestFields& fields) const
+  {
+    req.command = fields.command;
+    req.gripper_id = fields.gripper_id;
+    req.position = fields.position;
+    req.velocity = fields.velocity;
+    req.force = fields.force;
+    req.max_time_ms = fields.max_time_ms;
+    req.block = fields.block;
+    req.gripper_type = fields.gripper_type;
+    req.rot_num = fields.rot_num;
+    req.rot_vel = fields.rot_vel;
+    req.rot_torque = fields.rot_torque;
+  }
+
+  SendResult callGripperService(const fr_task_planner::GripperBridgeRequestFields& fields,
+                                bool require_motion_gate, const char* nonzero_prefix)
+  {
+    using fr_task_planner::classifyGripperCall;
+    using fr_task_planner::formatGripperRequestLog;
+    using fr_task_planner::formatGripperResponseLog;
     SendResult result;
     result.attempted = true;
-    if (!motionGateOpen())
+    if (require_motion_gate && !motionGateOpen())
     {
       result.error = "motion gate closed; refusing gripper command";
       return result;
     }
-    auto req = std::make_shared<fairino_msgs::srv::GripperBridge::Request>();
-    req->command = "move";
-    req->gripper_id = cfg_.gripper_id;
-    req->position = cfg_.gripper_close_position;
-    req->velocity = cfg_.gripper_velocity;
-    req->force = cfg_.gripper_force;
-    req->max_time_ms = cfg_.gripper_max_time_ms;
-    req->block = cfg_.gripper_block;
-    req->gripper_type = cfg_.gripper_type;
-    if (!gripper_client_->wait_for_service(std::chrono::seconds(2)))
+    ensureGripperClient();
+    RCLCPP_INFO(node_->get_logger(), "%s", formatGripperRequestLog(fields).c_str());
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool available =
+        gripper_client_->wait_for_service(std::chrono::seconds(2));
+    const double wait_elapsed =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    RCLCPP_INFO(node_->get_logger(),
+                "GRIPPER service wait elapsed_sec=%.3f available=%s", wait_elapsed,
+                available ? "YES" : "NO");
+    if (!available)
     {
-      result.error = fr_task_planner::kErrorGripperCloseFailed;
+      auto classified =
+          classifyGripperCall(false, false, false, 0, "", wait_elapsed, nonzero_prefix);
+      result.error = classified.error;
+      RCLCPP_ERROR(node_->get_logger(), "%s",
+                   formatGripperResponseLog(0, classified.error, wait_elapsed, false).c_str());
       return result;
     }
+    auto req = std::make_shared<fairino_msgs::srv::GripperBridge::Request>();
+    fillGripperRequest(*req, fields);
+    const auto t_send = std::chrono::steady_clock::now();
+    RCLCPP_INFO(node_->get_logger(), "GRIPPER request send timestamp_sec=%.6f",
+                std::chrono::duration<double>(t_send.time_since_epoch()).count());
     auto future = gripper_client_->async_send_request(req);
     result.sent = true;
     ++gripper_commands_sent_;
-    if (rclcpp::spin_until_future_complete(
-            node_, future, std::chrono::duration<double>(cfg_.gripper_timeout_sec)) !=
-        rclcpp::FutureReturnCode::SUCCESS)
+    const auto wait_status = rclcpp::spin_until_future_complete(
+        node_, future, std::chrono::duration<double>(cfg_.gripper_timeout_sec));
+    const double elapsed =
+        std::chrono::duration<double>(std::chrono::steady_clock::now() - t_send).count();
+    RCLCPP_INFO(node_->get_logger(), "GRIPPER response timestamp elapsed_sec=%.3f", elapsed);
+    if (wait_status != rclcpp::FutureReturnCode::SUCCESS)
     {
-      result.error = fr_task_planner::kErrorGripperCloseFailed;
+      auto classified =
+          classifyGripperCall(true, true, false, 0, "", elapsed, nonzero_prefix);
+      result.error = classified.error;
+      RCLCPP_ERROR(node_->get_logger(), "%s",
+                   formatGripperResponseLog(0, classified.error, elapsed, false).c_str());
       return result;
     }
     auto resp = future.get();
-    if (!resp || resp->error_code != 0)
+    const bool null_resp = !resp;
+    const int error_code = resp ? resp->error_code : 0;
+    const std::string message = resp ? resp->message : "";
+    RCLCPP_INFO(node_->get_logger(), "%s",
+                formatGripperResponseLog(error_code, message, elapsed, !null_resp).c_str());
+    auto classified = classifyGripperCall(true, false, null_resp, error_code, message, elapsed,
+                                          nonzero_prefix);
+    if (!classified.ok)
     {
-      result.error = fr_task_planner::kErrorGripperCloseFailed;
+      result.error = classified.error;
+      RCLCPP_ERROR(node_->get_logger(), "%s", classified.error.c_str());
+      return result;
+    }
+    result.success = true;
+    return result;
+  }
+
+  SendResult pingGripper(bool require_motion_gate)
+  {
+    return callGripperService(fr_task_planner::makeGripperPingRequest(cfg_), require_motion_gate,
+                              fr_task_planner::kErrorGripperPingFailed);
+  }
+
+  SendResult closeGripper()
+  {
+    auto result = callGripperService(fr_task_planner::makeGripperCloseRequest(cfg_), true,
+                                     fr_task_planner::kErrorGripperCloseFailed);
+    if (!result.success)
+    {
       return result;
     }
     if (cfg_.gripper_post_close_wait_sec > 0.0)
@@ -724,7 +838,6 @@ private:
       std::this_thread::sleep_for(
           std::chrono::duration<double>(cfg_.gripper_post_close_wait_sec));
     }
-    result.success = true;
     return result;
   }
 
@@ -874,6 +987,10 @@ int main(int argc, char** argv)
   declareDefault(node, "gripper_max_time_ms", 5000);
   declareDefault(node, "gripper_block", 1);
   declareDefault(node, "gripper_type", 0);
+  declareDefault(node, "gripper_rot_num", 0.0);
+  declareDefault(node, "gripper_rot_vel", 0);
+  declareDefault(node, "gripper_rot_torque", 0);
+  declareDefault(node, "gripper_ping_only", false);
   declareDefault(node, "write_scaled_debug_yaml", true);
   declareDefault(node, "scaled_debug_yaml", std::string("/tmp/fr3_step13_scaled_trajectory.yaml"));
   RealFrozenExecutorNode exec(node);

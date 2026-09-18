@@ -19,6 +19,11 @@ gripper_force: 20
 gripper_max_time_ms: 5000
 gripper_block: 1
 gripper_type: 0
+gripper_rot_num: 0.0
+gripper_rot_vel: 0
+gripper_rot_torque: 0
+gripper_timeout_sec: 15.0
+gripper_post_close_wait_sec: 0.5
 
 planning_group: fairino3_v6_group
 planning_frame: base_link

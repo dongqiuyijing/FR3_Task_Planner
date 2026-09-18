@@ -26,6 +26,13 @@ inline constexpr const char* kErrorSegmentEndMismatch = "SEGMENT_END_STATE_MISMA
 inline constexpr const char* kErrorSegmentEndSettleTimeout = "SEGMENT_END_SETTLE_TIMEOUT";
 inline constexpr const char* kErrorHomeSettleTimeout = "HOME_SETTLE_TIMEOUT";
 inline constexpr const char* kErrorGripperCloseFailed = "REAL_GRIPPER_CLOSE_FAILED";
+inline constexpr const char* kErrorGripperServiceUnavailable = "GRIPPER_SERVICE_UNAVAILABLE";
+inline constexpr const char* kErrorGripperServiceTimeout = "GRIPPER_SERVICE_TIMEOUT";
+inline constexpr const char* kErrorGripperNullResponse = "GRIPPER_NULL_RESPONSE";
+inline constexpr const char* kErrorGripperBridgeError = "GRIPPER_BRIDGE_ERROR";
+inline constexpr const char* kErrorGripperPingFailed = "GRIPPER_PING_FAILED";
+inline constexpr const char* kGripperCommandMove = "move";
+inline constexpr const char* kGripperCommandPing = "ping";
 inline constexpr const char* kErrorSimTimeInvalid = "REAL_EXECUTION_SIM_TIME_INVALID";
 inline constexpr const char* kErrorMissingJoint = "MISSING_JOINT";
 inline constexpr const char* kErrorNanTrajectory = "NAN_TRAJECTORY";
@@ -44,6 +51,7 @@ enum class ExecutorPhase
   CHECK_REAL_MODE,
   PLAN_CURRENT_TO_HOME,
   WAIT_USER_EXECUTION_GATE,
+  GRIPPER_PING_PREFLIGHT,
   EXECUTE_CURRENT_TO_HOME,
   VERIFY_HOME,
   LOAD_FROZEN_TRAJECTORY,
@@ -96,6 +104,10 @@ struct ExecutorConfig
   int gripper_max_time_ms = 5000;
   int gripper_block = 1;
   int gripper_type = 0;
+  double gripper_rot_num = 0.0;
+  int gripper_rot_vel = 0;
+  int gripper_rot_torque = 0;
+  bool gripper_ping_only = false;
   std::string trajectory_file;
   std::string controller_name = kDefaultControllerName;
   std::string trajectory_action_name = kDefaultTrajectoryActionName;
@@ -160,6 +172,41 @@ struct SendResult
   std::string error;
 };
 
+struct GripperBridgeRequestFields
+{
+  std::string command = kGripperCommandMove;
+  int gripper_id = 1;
+  int position = 85;
+  int velocity = 20;
+  int force = 20;
+  int max_time_ms = 5000;
+  int block = 1;
+  int gripper_type = 0;
+  double rot_num = 0.0;
+  int rot_vel = 0;
+  int rot_torque = 0;
+};
+
+enum class GripperCallKind
+{
+  Success,
+  ServiceUnavailable,
+  Timeout,
+  NullResponse,
+  BridgeError
+};
+
+struct GripperCallOutcome
+{
+  bool ok = false;
+  GripperCallKind kind = GripperCallKind::Success;
+  std::string error;
+  int error_code = 0;
+  std::string message;
+  double elapsed_sec = 0.0;
+  bool response_received = false;
+};
+
 struct PlanResult
 {
   bool attempted = false;
@@ -177,6 +224,7 @@ struct ExecutorHooks
   std::function<SendResult(const std::string& logical, const TrajectorySegmentRecord& scaled)>
       sendSegment;
   std::function<SendResult()> closeGripper;
+  std::function<SendResult()> pingGripper;
   std::function<SendResult()> attachObject;
   std::function<SendResult()> restoreTableCollision;
   std::function<bool()> useSimTimeInvalid;
@@ -250,6 +298,15 @@ SettleResult waitForJointConvergence(const std::string& segment,
                                      const std::vector<std::string>& target_names,
                                      const std::vector<double>& target_values, double tolerance_rad,
                                      const ExecutorConfig& cfg, ExecutorHooks hooks);
+
+GripperBridgeRequestFields makeGripperCloseRequest(const ExecutorConfig& cfg);
+GripperBridgeRequestFields makeGripperPingRequest(const ExecutorConfig& cfg);
+std::string formatGripperRequestLog(const GripperBridgeRequestFields& req);
+std::string formatGripperResponseLog(int error_code, const std::string& message, double elapsed_sec,
+                                     bool response_received);
+GripperCallOutcome classifyGripperCall(bool service_available, bool timed_out, bool null_response,
+                                       int error_code, const std::string& message,
+                                       double elapsed_sec, const char* nonzero_prefix);
 
 ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajectory& traj,
                                 ExecutorHooks hooks);
