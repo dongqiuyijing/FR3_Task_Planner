@@ -330,6 +330,10 @@ private:
     cfg_.start_state_tolerance_rad = getDouble(node_, "start_state_tolerance_rad", 0.02);
     cfg_.segment_start_tolerance_rad = getDouble(node_, "segment_start_tolerance_rad", 0.02);
     cfg_.segment_end_tolerance_rad = getDouble(node_, "segment_end_tolerance_rad", 0.02);
+    cfg_.joint_settle_timeout_sec = getDouble(node_, "joint_settle_timeout_sec", 10.0);
+    cfg_.joint_settle_poll_period_sec = getDouble(node_, "joint_settle_poll_period_sec", 0.10);
+    cfg_.joint_settle_required_samples =
+        getInt(node_, "joint_settle_required_samples", 3);
     cfg_.joint_state_max_age_sec = getDouble(node_, "joint_state_max_age_sec", 0.5);
     cfg_.timeout_factor = getDouble(node_, "timeout_factor", 1.5);
     cfg_.timeout_margin_sec = getDouble(node_, "timeout_margin_sec", 10.0);
@@ -367,14 +371,20 @@ private:
   {
     std::lock_guard<std::mutex> lock(joint_mu_);
     latest_joints_.joints.clear();
+    latest_joints_.velocities.clear();
     const size_t n = std::min(msg->name.size(), msg->position.size());
     for (size_t i = 0; i < n; ++i)
     {
       latest_joints_.joints[msg->name[i]] = msg->position[i];
+      if (i < msg->velocity.size())
+      {
+        latest_joints_.velocities[msg->name[i]] = msg->velocity[i];
+      }
     }
     latest_joints_.stamp_valid = true;
-    const auto now = node_->get_clock()->now();
-    latest_joints_.age_sec = std::max(0.0, (now - rclcpp::Time(msg->header.stamp)).seconds());
+    last_joint_stamp_ = rclcpp::Time(msg->header.stamp);
+    latest_joints_.age_sec =
+        std::max(0.0, (node_->get_clock()->now() - last_joint_stamp_).seconds());
     have_joints_ = true;
   }
 
@@ -387,12 +397,7 @@ private:
       if (have_joints_)
       {
         auto snap = latest_joints_;
-        const auto now = node_->get_clock()->now();
-        if (snap.stamp_valid)
-        {
-          snap.age_sec = std::min(snap.age_sec, 10.0);
-          (void)now;
-        }
+        snap.age_sec = std::max(0.0, (node_->get_clock()->now() - last_joint_stamp_).seconds());
         return snap;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -402,7 +407,9 @@ private:
     {
       return std::nullopt;
     }
-    return latest_joints_;
+    auto snap = latest_joints_;
+    snap.age_sec = std::max(0.0, (node_->get_clock()->now() - last_joint_stamp_).seconds());
+    return snap;
   }
 
   void inspectLive(bool motion)
@@ -810,6 +817,7 @@ private:
   fr_task_planner::PersistedTrajectory traj_;
   std::mutex joint_mu_;
   JointSnapshot latest_joints_;
+  rclcpp::Time last_joint_stamp_{ 0, 0, RCL_ROS_TIME };
   bool have_joints_ = false;
   bool gazebo_detected_ = false;
   int motion_commands_sent_ = 0;
@@ -838,6 +846,9 @@ int main(int argc, char** argv)
   declareDefault(node, "start_state_tolerance_rad", 0.02);
   declareDefault(node, "segment_start_tolerance_rad", 0.02);
   declareDefault(node, "segment_end_tolerance_rad", 0.02);
+  declareDefault(node, "joint_settle_timeout_sec", 10.0);
+  declareDefault(node, "joint_settle_poll_period_sec", 0.10);
+  declareDefault(node, "joint_settle_required_samples", 3);
   declareDefault(node, "joint_state_max_age_sec", 0.5);
   declareDefault(node, "timeout_factor", 1.5);
   declareDefault(node, "timeout_margin_sec", 10.0);

@@ -125,6 +125,15 @@ def _launch_nodes(context, *args, **kwargs):
         "start_state_tolerance_rad": float(
             LaunchConfiguration("start_state_tolerance_rad").perform(context)
         ),
+        "joint_settle_timeout_sec": float(
+            LaunchConfiguration("joint_settle_timeout_sec").perform(context)
+        ),
+        "joint_settle_poll_period_sec": float(
+            LaunchConfiguration("joint_settle_poll_period_sec").perform(context)
+        ),
+        "joint_settle_required_samples": int(
+            LaunchConfiguration("joint_settle_required_samples").perform(context)
+        ),
         "gripper_enabled": LaunchConfiguration("gripper_enabled").perform(context).lower()
         == "true",
         "real_robot_confirmation": LaunchConfiguration("real_robot_confirmation").perform(
@@ -199,6 +208,9 @@ def generate_launch_description():
             DeclareLaunchArgument("segment_start_tolerance_rad", default_value="0.02"),
             DeclareLaunchArgument("segment_end_tolerance_rad", default_value="0.02"),
             DeclareLaunchArgument("start_state_tolerance_rad", default_value="0.02"),
+            DeclareLaunchArgument("joint_settle_timeout_sec", default_value="10.0"),
+            DeclareLaunchArgument("joint_settle_poll_period_sec", default_value="0.10"),
+            DeclareLaunchArgument("joint_settle_required_samples", default_value="3"),
             DeclareLaunchArgument("gripper_enabled", default_value="true"),
             DeclareLaunchArgument("real_robot_confirmation", default_value=""),
             OpaqueFunction(function=_launch_nodes),

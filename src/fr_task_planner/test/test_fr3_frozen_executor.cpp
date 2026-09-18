@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -35,6 +36,20 @@ JointSnapshot snapFrom(const std::vector<double>& values)
   snap.stamp_valid = true;
   snap.age_sec = 0.01;
   snap.joints = vecToJoints(values);
+  return snap;
+}
+
+JointSnapshot snapNamed(const std::vector<std::string>& names, const std::vector<double>& values,
+                        double age = 0.01)
+{
+  JointSnapshot snap;
+  snap.stamp_valid = true;
+  snap.age_sec = age;
+  const size_t n = std::min(names.size(), values.size());
+  for (size_t i = 0; i < n; ++i)
+  {
+    snap.joints[names[i]] = values[i];
+  }
   return snap;
 }
 
@@ -138,6 +153,7 @@ struct MockRobot
   std::vector<std::string> sent;
   std::vector<std::string> events;
   bool used_frozen_home = false;
+  double time_sec = 0.0;
 
   ExecutorHooks hooks()
   {
@@ -210,6 +226,8 @@ struct MockRobot
     h.useSimTimeInvalid = []() { return false; };
     h.gazeboDetected = []() { return false; };
     h.controllerReady = [this]() { return controller_ok; };
+    h.nowSec = [this]() { return time_sec; };
+    h.sleepSec = [this](double s) { time_sec += s; };
     return h;
   }
 };
@@ -221,6 +239,57 @@ ExecutorConfig execCfg()
   cfg.real_robot_confirmation = kRealRobotConfirmation;
   cfg.trajectory_speed_scale = 1.0;
   cfg.plan_current_to_home = true;
+  return cfg;
+}
+
+struct SeqReader
+{
+  std::vector<JointSnapshot> seq;
+  size_t index = 0;
+  int reads = 0;
+  int send_calls = 0;
+  double time_sec = 0.0;
+
+  std::optional<JointSnapshot> next()
+  {
+    ++reads;
+    if (seq.empty())
+    {
+      return std::nullopt;
+    }
+    if (index < seq.size())
+    {
+      return seq[index++];
+    }
+    return seq.back();
+  }
+
+  ExecutorHooks hooks()
+  {
+    ExecutorHooks h;
+    h.readJoints = [this]() { return next(); };
+    h.nowSec = [this]() { return time_sec; };
+    h.sleepSec = [this](double s) { time_sec += s; };
+    h.sendSegment = [this](const std::string&, const TrajectorySegmentRecord&) {
+      ++send_calls;
+      SendResult r;
+      r.attempted = true;
+      r.error = "settle helper must not send motion";
+      return r;
+    };
+    return h;
+  }
+};
+
+ExecutorConfig settleCfg()
+{
+  ExecutorConfig cfg;
+  cfg.joint_settle_timeout_sec = 10.0;
+  cfg.joint_settle_poll_period_sec = 0.10;
+  cfg.joint_settle_required_samples = 3;
+  cfg.joint_state_max_age_sec = 0.5;
+  cfg.segment_end_tolerance_rad = 0.02;
+  cfg.home_tolerance_rad = 0.02;
   return cfg;
 }
 }  // namespace
@@ -476,6 +545,139 @@ int main(int argc, char** argv)
     all_frozen_sent = all_frozen_sent && found;
   }
   check(all_frozen_sent, "TEST23b_all_frozen_segments_sent_without_replan");
+
+  const std::vector<std::string> unordered = { "j1", "j2", "j4", "j5", "j3", "j6" };
+  const std::vector<double> grasp_target = { 0.419211129,  0.145426114, 0.272553076,
+                                            -0.417949142, 2.775405619, 0.785428936 };
+  const std::vector<std::string> arm = { "j1", "j2", "j3", "j4", "j5", "j6" };
+  auto unorderedFromArm = [&](const std::vector<double>& arm_vals) {
+    std::map<std::string, double> m;
+    for (size_t i = 0; i < arm.size(); ++i)
+    {
+      m[arm[i]] = arm_vals[i];
+    }
+    std::vector<double> ordered;
+    for (const auto& n : unordered)
+    {
+      ordered.push_back(m[n]);
+    }
+    return snapNamed(unordered, ordered);
+  };
+
+  {
+    SeqReader r;
+    r.seq = {
+      unorderedFromArm({ 0.447345250, 0.122331173, 0.325040642, -0.447409798, 2.803547230, 0.785390573 }),
+      unorderedFromArm({ 0.434000000, 0.133000000, 0.302000000, -0.432000000, 2.790000000, 0.785410000 }),
+      unorderedFromArm({ 0.425000000, 0.140000000, 0.287000000, -0.423000000, 2.780000000, 0.785420000 }),
+      unorderedFromArm({ 0.422000000, 0.143000000, 0.280000000, -0.420000000, 2.777000000, 0.785425000 }),
+      unorderedFromArm({ 0.419209618638, 0.145428219687, 0.272547373326, -0.417949011336,
+                         2.775404008962, 0.785432318438 }),
+    };
+    auto s = waitForJointConvergence("PreGrasp_to_Grasp", arm, grasp_target, 0.02, settleCfg(),
+                                     r.hooks());
+    check(s.ok && s.consecutive_ok >= 3 && s.immediate_end_error_rad > 0.05 &&
+              s.settled_end_error_rad < 1e-5 && r.send_calls == 0,
+          "SETTLE_real_case_unordered_converges");
+  }
+
+  {
+    SeqReader r;
+    auto good = unorderedFromArm(grasp_target);
+    r.seq = { good, good, good };
+    auto s = waitForJointConvergence("A", arm, grasp_target, 0.02, settleCfg(), r.hooks());
+    check(s.ok && s.samples_received == 3 && s.immediate_end_error_rad <= 0.02, "SETTLE_A_immediate_pass");
+  }
+
+  {
+    SeqReader r;
+    auto bad = unorderedFromArm({ 0.447345250, 0.122331173, 0.325040642, -0.447409798, 2.803547230,
+                                  0.785390573 });
+    auto mid = unorderedFromArm({ 0.425000000, 0.140000000, 0.287000000, -0.423000000, 2.780000000,
+                                  0.785420000 });
+    auto good = unorderedFromArm(grasp_target);
+    r.seq = { bad, mid, good, good, good };
+    auto s = waitForJointConvergence("B", arm, grasp_target, 0.02, settleCfg(), r.hooks());
+    check(s.ok && s.immediate_end_error_rad > 0.02, "SETTLE_B_later_converge");
+  }
+
+  {
+    SeqReader r;
+    auto bad = unorderedFromArm({ 0.447345250, 0.122331173, 0.325040642, -0.447409798, 2.803547230,
+                                  0.785390573 });
+    r.seq = { bad };
+    auto cfg = settleCfg();
+    cfg.joint_settle_timeout_sec = 0.35;
+    auto s = waitForJointConvergence("C", arm, grasp_target, 0.02, cfg, r.hooks());
+    check(!s.ok && s.error.find(kErrorSegmentEndSettleTimeout) != std::string::npos,
+          "SETTLE_C_timeout_fail");
+  }
+
+  {
+    SeqReader r;
+    auto good = unorderedFromArm(grasp_target);
+    auto bad = unorderedFromArm({ 0.447345250, 0.122331173, 0.325040642, -0.447409798, 2.803547230,
+                                  0.785390573 });
+    r.seq = { good, bad, good, good, good };
+    auto s = waitForJointConvergence("D", arm, grasp_target, 0.02, settleCfg(), r.hooks());
+    check(s.ok && s.samples_received >= 5, "SETTLE_D_consecutive_reset");
+  }
+
+  {
+    SeqReader r;
+    auto stale = unorderedFromArm(grasp_target);
+    stale.age_sec = 1.0;
+    r.seq = { stale };
+    auto cfg = settleCfg();
+    cfg.joint_settle_timeout_sec = 0.35;
+    auto s = waitForJointConvergence("E", arm, grasp_target, 0.02, cfg, r.hooks());
+    check(!s.ok && s.samples_received == 0, "SETTLE_E_stale_not_success");
+  }
+
+  {
+    SeqReader r;
+    JointSnapshot missing;
+    missing.stamp_valid = true;
+    missing.age_sec = 0.01;
+    missing.joints["j1"] = grasp_target[0];
+    missing.joints["j2"] = grasp_target[1];
+    missing.joints["j4"] = grasp_target[3];
+    missing.joints["j5"] = grasp_target[4];
+    missing.joints["j6"] = grasp_target[5];
+    r.seq = { missing };
+    auto cfg = settleCfg();
+    cfg.joint_settle_timeout_sec = 0.35;
+    auto s = waitForJointConvergence("F", arm, grasp_target, 0.02, cfg, r.hooks());
+    check(!s.ok && s.samples_received == 0, "SETTLE_F_missing_j3");
+  }
+
+  {
+    SeqReader r;
+    auto good = unorderedFromArm(grasp_target);
+    r.seq = { good, good, good };
+    auto s = waitForJointConvergence("G", arm, grasp_target, 0.02, settleCfg(), r.hooks());
+    check(s.ok, "SETTLE_G_unordered_namemap");
+  }
+
+  {
+    SeqReader r;
+    auto good = unorderedFromArm(grasp_target);
+    for (const auto& n : arm)
+    {
+      good.velocities[n] = std::numeric_limits<double>::quiet_NaN();
+    }
+    r.seq = { good, good, good };
+    auto s = waitForJointConvergence("H", arm, grasp_target, 0.02, settleCfg(), r.hooks());
+    check(s.ok && s.velocity_unavailable, "SETTLE_H_velocity_nan_still_pass");
+  }
+
+  {
+    SeqReader r;
+    auto good = unorderedFromArm(grasp_target);
+    r.seq = { good, good, good };
+    auto s = waitForJointConvergence("J", arm, grasp_target, 0.02, settleCfg(), r.hooks());
+    check(s.ok && s.motion_commands_sent == 0 && r.send_calls == 0, "SETTLE_J_helper_sends_no_motion");
+  }
 
   std::cout << "passed=" << g_passes << " failed=" << g_fails << "\n";
   return g_fails == 0 ? 0 : 1;

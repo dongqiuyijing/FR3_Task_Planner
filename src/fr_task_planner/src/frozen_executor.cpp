@@ -2,10 +2,14 @@
 #include "fr_task_planner/inspection_endpoint_candidates.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <iomanip>
+#include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
+#include <thread>
 
 namespace fr_task_planner
 {
@@ -69,6 +73,46 @@ void abortTo(ExecutorTrace& trace, const std::string& reason)
   trace.abort_reason = reason;
   trace.final_phase = ExecutorPhase::ABORT;
   trace.phases.push_back(phaseName(ExecutorPhase::ABORT));
+}
+
+double defaultNowSec()
+{
+  return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void defaultSleepSec(double seconds)
+{
+  if (seconds > 0.0)
+  {
+    std::this_thread::sleep_for(std::chrono::duration<double>(seconds));
+  }
+}
+
+double nowFrom(const ExecutorHooks& hooks)
+{
+  return hooks.nowSec ? hooks.nowSec() : defaultNowSec();
+}
+
+void sleepFrom(const ExecutorHooks& hooks, double seconds)
+{
+  if (hooks.sleepSec)
+  {
+    hooks.sleepSec(seconds);
+    return;
+  }
+  defaultSleepSec(seconds);
+}
+
+std::string formatSettle(const SettleResult& r, double elapsed, double tolerance, const char* title)
+{
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(6);
+  oss << title << " segment=" << r.segment << " elapsed=" << elapsed
+      << " max_error=" << r.last_max_error << " tolerance=" << tolerance
+      << " consecutive=" << r.consecutive_ok << " samples=" << r.samples_received
+      << " best_max_error=" << r.best_max_error;
+  return oss.str();
 }
 
 std::vector<std::string> armNames()
@@ -561,6 +605,176 @@ bool snapshotFresh(const JointSnapshot& snap, double max_age_sec, std::string& e
   return true;
 }
 
+bool snapshotVelocityUnavailable(const JointSnapshot& snap)
+{
+  if (snap.velocities.empty())
+  {
+    return true;
+  }
+  for (const auto& name : kArmJoints)
+  {
+    const auto it = snap.velocities.find(name);
+    if (it == snap.velocities.end() || !std::isfinite(it->second))
+    {
+      return true;
+    }
+  }
+  return false;
+}
+
+SettleResult waitForJointConvergence(const std::string& segment,
+                                     const std::vector<std::string>& target_names,
+                                     const std::vector<double>& target_values, double tolerance_rad,
+                                     const ExecutorConfig& cfg, ExecutorHooks hooks)
+{
+  SettleResult result;
+  result.segment = segment;
+  result.best_max_error = std::numeric_limits<double>::infinity();
+  result.last_max_error = std::numeric_limits<double>::infinity();
+  result.immediate_end_error_rad = std::numeric_limits<double>::infinity();
+  result.settled_end_error_rad = std::numeric_limits<double>::infinity();
+  const int required = std::max(1, cfg.joint_settle_required_samples);
+  const double timeout = std::max(0.0, cfg.joint_settle_timeout_sec);
+  const double poll = std::max(0.0, cfg.joint_settle_poll_period_sec);
+  const double t0 = nowFrom(hooks);
+  double last_log_elapsed = -1.0;
+  bool logged_velocity = false;
+  bool first_log = true;
+
+  auto emit = [&](const char* title, double elapsed) {
+    logLine(hooks, formatSettle(result, elapsed, tolerance_rad, title));
+    if (!result.expected.empty() || !result.actual.empty())
+    {
+      logLine(hooks, std::string("  target ") + formatJoints(result.expected) + " actual " +
+                         formatJoints(result.actual));
+    }
+  };
+
+  while (true)
+  {
+    const double elapsed = nowFrom(hooks) - t0;
+    result.settle_elapsed_sec = elapsed;
+    if (elapsed > timeout)
+    {
+      break;
+    }
+    if (!hooks.readJoints)
+    {
+      result.error = "joint_states unavailable";
+      break;
+    }
+    auto snap = hooks.readJoints();
+    if (!snap)
+    {
+      result.consecutive_ok = 0;
+      if (first_log || elapsed - last_log_elapsed >= 1.0)
+      {
+        logLine(hooks, std::string("WAITING FOR JOINT SETTLE segment=") + segment +
+                           " elapsed=" + std::to_string(elapsed) + " joint_states unavailable");
+        last_log_elapsed = elapsed;
+        first_log = false;
+      }
+    }
+    else
+    {
+      if (snapshotVelocityUnavailable(*snap))
+      {
+        result.velocity_unavailable = true;
+        if (!logged_velocity)
+        {
+          logLine(hooks, "velocity unavailable / NaN; position-only settle");
+          logged_velocity = true;
+        }
+      }
+      std::string local;
+      const bool have_joints = snapshotHasRequiredJoints(*snap, local);
+      const bool fresh = snapshotFresh(*snap, cfg.joint_state_max_age_sec, local);
+      if (!have_joints || !fresh)
+      {
+        result.consecutive_ok = 0;
+        result.error = local;
+        if (first_log || elapsed - last_log_elapsed >= 1.0)
+        {
+          logLine(hooks, std::string("WAITING FOR JOINT SETTLE segment=") + segment +
+                             " elapsed=" + std::to_string(elapsed) + " skipped=" + local);
+          last_log_elapsed = elapsed;
+          first_log = false;
+        }
+      }
+      else
+      {
+        auto check = checkNamedJoints(*snap, target_names, target_values, tolerance_rad,
+                                      kErrorSegmentEndMismatch, segment);
+        result.expected = check.expected;
+        result.actual = check.actual;
+        result.last_max_error = check.max_error;
+        result.samples_received += 1;
+        if (!result.had_valid_sample)
+        {
+          result.immediate_end_error_rad = check.max_error;
+          result.had_valid_sample = true;
+        }
+        result.best_max_error = std::min(result.best_max_error, check.max_error);
+        if (check.ok)
+        {
+          result.consecutive_ok += 1;
+          result.error.clear();
+          if (result.consecutive_ok >= required)
+          {
+            result.ok = true;
+            result.settled_end_error_rad = check.max_error;
+            result.settle_elapsed_sec = nowFrom(hooks) - t0;
+            emit("JOINT SETTLED", result.settle_elapsed_sec);
+            logLine(hooks, "  immediate_end_error_rad=" +
+                               std::to_string(result.immediate_end_error_rad) +
+                               " settled_end_error_rad=" +
+                               std::to_string(result.settled_end_error_rad) +
+                               " settle_elapsed_sec=" + std::to_string(result.settle_elapsed_sec));
+            return result;
+          }
+        }
+        else
+        {
+          result.consecutive_ok = 0;
+          result.error = check.error;
+        }
+        if (first_log || elapsed - last_log_elapsed >= 1.0)
+        {
+          emit("WAITING FOR JOINT SETTLE", elapsed);
+          last_log_elapsed = elapsed;
+          first_log = false;
+        }
+      }
+    }
+    if (nowFrom(hooks) - t0 > timeout)
+    {
+      break;
+    }
+    sleepFrom(hooks, poll);
+  }
+
+  result.ok = false;
+  result.settle_elapsed_sec = nowFrom(hooks) - t0;
+  if (result.error.empty() || result.error == kErrorSegmentEndMismatch)
+  {
+    result.error = (segment == "Home") ? kErrorHomeSettleTimeout : kErrorSegmentEndSettleTimeout;
+  }
+  else
+  {
+    result.error = std::string((segment == "Home") ? kErrorHomeSettleTimeout :
+                                                      kErrorSegmentEndSettleTimeout) +
+                   " " + result.error;
+  }
+  emit("JOINT SETTLE TIMEOUT", result.settle_elapsed_sec);
+  logLine(hooks, "  timeout=" + std::to_string(timeout) + " required_samples=" +
+                     std::to_string(required) + " consecutive_reached=" +
+                     std::to_string(result.consecutive_ok) + " samples_received=" +
+                     std::to_string(result.samples_received) + " last_max_error=" +
+                     std::to_string(result.last_max_error) + " best_max_error=" +
+                     std::to_string(result.best_max_error));
+  return result;
+}
+
 ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajectory& traj,
                                 ExecutorHooks hooks)
 {
@@ -763,18 +977,24 @@ ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajec
       abortTo(trace, sent.error.empty() ? ("controller failure on " + logical) : sent.error);
       return false;
     }
-    if (!refreshOk())
+    const auto end_names = frozen->joint_names.empty() ? armNames() : frozen->joint_names;
+    const auto end_values = (frozen->end_joints.size() < kArmJoints.size() && !frozen->points.empty()) ?
+                                frozen->points.back().positions :
+                                frozen->end_joints;
+    auto settle = waitForJointConvergence(logical, end_names, end_values,
+                                          cfg.segment_end_tolerance_rad, cfg, hooks);
+    logLine(hooks, "segment " + logical + " immediate_end_error_rad=" +
+                       std::to_string(settle.immediate_end_error_rad) +
+                       " settled_end_error_rad=" + std::to_string(settle.settled_end_error_rad) +
+                       " settle_elapsed_sec=" + std::to_string(settle.settle_elapsed_sec));
+    if (!settle.ok)
     {
+      abortTo(trace, settle.error + " segment=" + logical);
       return false;
     }
-    auto end = checkSegmentEnd(*snap, *frozen, cfg.segment_end_tolerance_rad);
-    logLine(hooks, "segment " + logical + " expected end " + formatJoints(end.expected) +
-                       " actual " + formatJoints(end.actual) +
-                       " max_error=" + std::to_string(end.max_error));
-    if (!end.ok)
+    if (hooks.readJoints)
     {
-      abortTo(trace, end.error + " segment=" + logical);
-      return false;
+      snap = hooks.readJoints();
     }
     return true;
   };
@@ -805,20 +1025,22 @@ ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajec
   }
 
   push(ExecutorPhase::VERIFY_HOME);
-  if (!refreshOk())
-  {
-    return trace;
-  }
   {
     const auto home_vec =
         traj.winner.home_rad.empty() ? kStep12cHomeRad : jointsToVec(traj.winner.home_rad);
-    auto home = checkHome(*snap, home_vec, cfg.home_tolerance_rad);
-    logLine(hooks, "Home expected " + formatJoints(home.expected) + " actual " +
-                       formatJoints(home.actual) + " max_error=" + std::to_string(home.max_error));
-    if (!home.ok)
+    auto settle = waitForJointConvergence("Home", armNames(), home_vec, cfg.home_tolerance_rad, cfg,
+                                          hooks);
+    logLine(hooks, "Home immediate_end_error_rad=" + std::to_string(settle.immediate_end_error_rad) +
+                       " settled_end_error_rad=" + std::to_string(settle.settled_end_error_rad) +
+                       " settle_elapsed_sec=" + std::to_string(settle.settle_elapsed_sec));
+    if (!settle.ok)
     {
-      abortTo(trace, home.error);
+      abortTo(trace, settle.error);
       return trace;
+    }
+    if (hooks.readJoints)
+    {
+      snap = hooks.readJoints();
     }
   }
 

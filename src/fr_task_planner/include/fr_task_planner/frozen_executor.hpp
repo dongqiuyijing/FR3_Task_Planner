@@ -23,6 +23,8 @@ inline constexpr const char* kDefaultObjectId = "small_part";
 inline constexpr const char* kDefaultTableName = "table";
 inline constexpr const char* kErrorFrozenStartMismatch = "FROZEN_START_STATE_MISMATCH";
 inline constexpr const char* kErrorSegmentEndMismatch = "SEGMENT_END_STATE_MISMATCH";
+inline constexpr const char* kErrorSegmentEndSettleTimeout = "SEGMENT_END_SETTLE_TIMEOUT";
+inline constexpr const char* kErrorHomeSettleTimeout = "HOME_SETTLE_TIMEOUT";
 inline constexpr const char* kErrorGripperCloseFailed = "REAL_GRIPPER_CLOSE_FAILED";
 inline constexpr const char* kErrorSimTimeInvalid = "REAL_EXECUTION_SIM_TIME_INVALID";
 inline constexpr const char* kErrorMissingJoint = "MISSING_JOINT";
@@ -79,6 +81,9 @@ struct ExecutorConfig
   double start_state_tolerance_rad = 0.02;
   double segment_start_tolerance_rad = 0.02;
   double segment_end_tolerance_rad = 0.02;
+  double joint_settle_timeout_sec = 10.0;
+  double joint_settle_poll_period_sec = 0.10;
+  int joint_settle_required_samples = 3;
   double joint_state_max_age_sec = 0.5;
   double timeout_factor = 1.5;
   double timeout_margin_sec = 10.0;
@@ -106,8 +111,28 @@ struct ExecutorConfig
 struct JointSnapshot
 {
   std::map<std::string, double> joints;
+  std::map<std::string, double> velocities;
   double age_sec = 0.0;
   bool stamp_valid = false;
+};
+
+struct SettleResult
+{
+  bool ok = false;
+  std::string error;
+  std::string segment;
+  std::vector<double> expected;
+  std::vector<double> actual;
+  double last_max_error = 0.0;
+  double immediate_end_error_rad = 0.0;
+  double settled_end_error_rad = 0.0;
+  double best_max_error = 0.0;
+  double settle_elapsed_sec = 0.0;
+  int samples_received = 0;
+  int consecutive_ok = 0;
+  int motion_commands_sent = 0;
+  bool velocity_unavailable = false;
+  bool had_valid_sample = false;
 };
 
 struct StateCheckResult
@@ -157,6 +182,8 @@ struct ExecutorHooks
   std::function<bool()> useSimTimeInvalid;
   std::function<bool()> gazeboDetected;
   std::function<bool()> controllerReady;
+  std::function<void(double)> sleepSec;
+  std::function<double()> nowSec;
 };
 
 struct ExecutorTrace
@@ -218,6 +245,11 @@ StateCheckResult checkSegmentEnd(const JointSnapshot& snap, const TrajectorySegm
                                  double tolerance_rad);
 bool snapshotHasRequiredJoints(const JointSnapshot& snap, std::string& error);
 bool snapshotFresh(const JointSnapshot& snap, double max_age_sec, std::string& error);
+bool snapshotVelocityUnavailable(const JointSnapshot& snap);
+SettleResult waitForJointConvergence(const std::string& segment,
+                                     const std::vector<std::string>& target_names,
+                                     const std::vector<double>& target_values, double tolerance_rad,
+                                     const ExecutorConfig& cfg, ExecutorHooks hooks);
 
 ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajectory& traj,
                                 ExecutorHooks hooks);

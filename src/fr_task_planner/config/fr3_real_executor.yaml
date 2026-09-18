@@ -36,3 +36,7 @@ touch_links:
 
 hardware_identifier: FR3RealSystem
 sim_hardware_identifier: GazeboSimSystem
+
+joint_settle_timeout_sec: 10.0
+joint_settle_poll_period_sec: 0.10
+joint_settle_required_samples: 3
