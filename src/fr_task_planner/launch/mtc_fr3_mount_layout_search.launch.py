@@ -127,6 +127,12 @@ def _launch_nodes(context, *args, **kwargs):
     params["skip_coarse_search"] = (
         LaunchConfiguration("skip_coarse_search").perform(context).lower() == "true"
     )
+    params["validate_only_p1z"] = float(
+        LaunchConfiguration("validate_only_p1z").perform(context)
+    )
+    params["orientation_audit_only"] = (
+        LaunchConfiguration("orientation_audit_only").perform(context).lower() == "true"
+    )
     params["visualize_search"] = (
         LaunchConfiguration("visualize_search").perform(context).lower() == "true"
     )
@@ -247,8 +253,10 @@ def generate_launch_description():
             DeclareLaunchArgument("roll_step_deg", default_value="5.0"),
             DeclareLaunchArgument("max_ik_solutions_per_pose", default_value="8"),
             DeclareLaunchArgument("min_ik_solution_distance", default_value="0.1"),
-            DeclareLaunchArgument("path_attempts", default_value="2"),
+            DeclareLaunchArgument("path_attempts", default_value="5"),
             DeclareLaunchArgument("skip_coarse_search", default_value="false"),
+            DeclareLaunchArgument("validate_only_p1z", default_value="0.0"),
+            DeclareLaunchArgument("orientation_audit_only", default_value="false"),
             DeclareLaunchArgument(
                 "diagnostic_output_path",
                 default_value="/tmp/fr3_step11f_p1z.yaml",

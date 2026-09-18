@@ -26,12 +26,14 @@
 #include <moveit_msgs/msg/collision_object.hpp>
 #include <moveit_msgs/msg/display_robot_state.hpp>
 #include <moveit_msgs/msg/display_trajectory.hpp>
+#include <moveit_msgs/msg/object_color.hpp>
 #include <moveit_msgs/srv/get_planning_scene.hpp>
 #include <moveit_task_constructor_msgs/msg/solution.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <shape_msgs/msg/solid_primitive.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
+#include <visualization_msgs/msg/marker.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
 
 namespace
@@ -820,6 +822,18 @@ visualization_msgs::msg::Marker baseMarker(int id, const std::string& ns, int ty
   return m;
 }
 
+bool pairIs(const std::string& a, const std::string& b, const std::string& x, const std::string& y)
+{
+  return (a == x && b == y) || (a == y && b == x);
+}
+
+void addDelete(visualization_msgs::msg::MarkerArray& arr, int id, const std::string& ns)
+{
+  auto m = baseMarker(id, ns, visualization_msgs::msg::Marker::SPHERE);
+  m.action = visualization_msgs::msg::Marker::DELETE;
+  arr.markers.push_back(m);
+}
+
 void addSphere(visualization_msgs::msg::MarkerArray& arr, int id, const Eigen::Vector3d& p,
                double radius, const std_msgs::msg::ColorRGBA& color, const std::string& ns)
 {
@@ -886,6 +900,9 @@ struct SearchViz
   rclcpp::Publisher<moveit_msgs::msg::DisplayTrajectory>::SharedPtr traj_pub;
   planning_scene::PlanningSceneConstPtr lift_scene;
   Eigen::Isometry3d t_world_base = Eigen::Isometry3d::Identity();
+  Eigen::Isometry3d t_tcp_object = Eigen::Isometry3d::Identity();
+  Eigen::Isometry3d canonical_c_object_world = Eigen::Isometry3d::Identity();
+  Eigen::Vector3d top_normal_local = Eigen::Vector3d(0.0, 0.0, 1.0);
   Eigen::Vector3d d1 = Eigen::Vector3d(0.0, -1.0, 0.0);
   Eigen::Vector3d up = Eigen::Vector3d(0.0, 0.0, 1.0);
   Eigen::Vector3d table_center = Eigen::Vector3d::Zero();
@@ -894,11 +911,27 @@ struct SearchViz
   Eigen::Vector3d column_size = Eigen::Vector3d::Zero();
   Eigen::Vector3d part_center = Eigen::Vector3d::Zero();
   std::string phase = "COARSE 5 CM";
+  std::string active_view = "C";
   int height_index = 0;
   int height_total = 9;
   std::optional<MountResult> best_clearance;
   std::optional<MountResult> best_feasible;
+  Eigen::Vector3d contact_world = Eigen::Vector3d::Zero();
+  bool contact_valid = false;
   bool launched_rviz_markers = false;
+
+  const ViewEval& focused(const MountResult& r) const
+  {
+    if (active_view == "A")
+    {
+      return r.a;
+    }
+    if (active_view == "B")
+    {
+      return r.b;
+    }
+    return r.c;
+  }
 
   void noteResult(const MountResult& r)
   {
@@ -918,6 +951,36 @@ struct SearchViz
     return t_world_base * poseToIso(tcp_base.pose);
   }
 
+  void refreshContact(const std::map<std::string, double>& joints)
+  {
+    contact_valid = false;
+    if (!enabled || !lift_scene || joints.empty())
+    {
+      return;
+    }
+    auto scene = planning_scene::PlanningScene::clone(lift_scene->diff());
+    applyJoints(scene->getCurrentStateNonConst(), joints);
+    collision_detection::CollisionRequest req;
+    req.contacts = true;
+    req.max_contacts = 200;
+    req.max_contacts_per_pair = 8;
+    collision_detection::CollisionResult res;
+    scene->checkCollision(req, res);
+    const std::string model_frame = lift_scene->getRobotModel()->getModelFrame();
+    for (const auto& item : res.contacts)
+    {
+      if (!pairIs(item.first.first, item.first.second, "forearm_link", "mounting_column") ||
+          item.second.empty())
+      {
+        continue;
+      }
+      const Eigen::Vector3d pos = item.second.front().pos;
+      contact_world = (model_frame == "world") ? pos : (t_world_base * pos);
+      contact_valid = std::isfinite(contact_world.x());
+      break;
+    }
+  }
+
   void publishGhost(const std::map<std::string, double>& joints, bool feasible)
   {
     if (!enabled || !ghost_pub || !lift_scene || joints.empty())
@@ -932,6 +995,10 @@ struct SearchViz
     forearm.id = "forearm_link";
     forearm.color = feasible ? rgba(0.1f, 0.9f, 0.2f, 0.9f) : rgba(1.0f, 0.05f, 0.05f, 0.95f);
     display.highlight_links.push_back(forearm);
+    moveit_msgs::msg::ObjectColor upper;
+    upper.id = "upperarm_link";
+    upper.color = feasible ? rgba(0.15f, 0.7f, 0.25f, 0.75f) : rgba(1.0f, 0.35f, 0.05f, 0.85f);
+    display.highlight_links.push_back(upper);
     display.hide = false;
     ghost_pub->publish(display);
   }
@@ -960,33 +1027,92 @@ struct SearchViz
     p1txt << std::fixed << std::setprecision(3) << "CURRENT P1\nz = " << p1.z() << " m";
     addText(arr, 11, p1 + Eigen::Vector3d(0.0, 0.0, 0.08), p1txt.str(),
             rgba(0.85f, 0.95f, 1.0f, 1.0f), 0.035, "search/current");
-    addArrow(arr, 12, p1, p1 + 0.18 * d1, rgba(1.0f, 0.85f, 0.1f, 1.0f), "inspection/d1");
     addArrow(arr, 13, p1, p1 + 0.18 * up, rgba(0.85f, 0.25f, 0.95f, 1.0f), "inspection/up");
 
+    Eigen::Isometry3d t_obj_c = canonical_c_object_world;
     if (current && !current->c.rep_joints.empty())
     {
-      const auto tcp_w = tcpWorld(current->c.rep_tcp);
-      addSphere(arr, 20, tcp_w.translation(), 0.02,
-                c_free ? rgba(0.1f, 0.85f, 0.2f, 0.95f) : rgba(1.0f, 0.08f, 0.08f, 0.95f),
+      t_obj_c = tcpWorld(current->c.rep_tcp) * t_tcp_object;
+    }
+    const Eigen::Vector3d n_actual = (t_obj_c.linear() * top_normal_local).normalized();
+    const Eigen::Vector3d n_expected(0.0, -1.0, 0.0);
+    const double face_dot = std::max(-1.0, std::min(1.0, n_actual.dot(n_expected)));
+    const double face_err_deg = std::acos(face_dot) * 180.0 / M_PI;
+    addArrow(arr, 70, p1, p1 + 0.24 * n_actual, rgba(0.15f, 1.0f, 0.85f, 1.0f),
+             "inspection/actual_face_normal");
+    addText(arr, 71, p1 + 0.27 * n_actual, "TOP CIRCLE FACE NORMAL\nR*object+Z (actual)",
+            rgba(0.2f, 1.0f, 0.85f, 1.0f), 0.028, "inspection/actual_face_normal");
+    addArrow(arr, 72, p1, p1 + 0.18 * n_expected, rgba(1.0f, 0.85f, 0.1f, 1.0f),
+             "inspection/expected_face_normal");
+    addText(arr, 73, p1 + Eigen::Vector3d(0.04, -0.22, 0.02),
+            "EXPECTED CAMERA-FACING DIRECTION\nworld -Y", rgba(1.0f, 0.9f, 0.3f, 1.0f), 0.028,
+            "inspection/expected_face_normal");
+    std::ostringstream geom;
+    geom << std::fixed << std::setprecision(3);
+    if (face_err_deg < 1.0)
+    {
+      geom << "ORIENTATION CORRECT\nactual overlaps expected\nerr = " << std::setprecision(2)
+           << face_err_deg << " deg";
+    }
+    else
+    {
+      geom << "GEOMETRY FAIL\nactual vs world -Y\nerr = " << std::setprecision(2) << face_err_deg
+           << " deg";
+    }
+    addText(arr, 74, p1 + Eigen::Vector3d(0.18, 0.05, 0.10), geom.str(),
+            face_err_deg < 1.0 ? rgba(0.2f, 1.0f, 0.4f, 1.0f) : rgba(1.0f, 0.15f, 0.1f, 1.0f), 0.03,
+            "inspection/orientation_audit");
+
+    if (current)
+    {
+      const ViewEval& fv = focused(*current);
+      if (!fv.rep_joints.empty())
+      {
+        const auto tcp_w = tcpWorld(fv.rep_tcp);
+        const bool v_free = fv.free_ik > 0;
+        addSphere(arr, 20, tcp_w.translation(), 0.02,
+                  v_free ? rgba(0.1f, 0.85f, 0.2f, 0.95f) : rgba(1.0f, 0.08f, 0.08f, 0.95f),
+                  "search/current");
+        addAxes(arr, 21, tcp_w, 0.08, "search/current");
+        std::ostringstream ctxt;
+        ctxt << std::fixed << std::setprecision(3);
+        if (active_view == "A")
+        {
+          ctxt << "VIEW A / side_pos_y\n";
+        }
+        else if (active_view == "B")
+        {
+          ctxt << "VIEW B / side_neg_y\n";
+        }
+        else
+        {
+          ctxt << "VIEW C / top_circle\n";
+        }
+        ctxt << "P1.z = " << current->p1z << " m\n";
+        if (active_view == "C")
+        {
+          ctxt << "TCP +Z is optical +Y\n(not the face normal)\n";
+          if (c_free)
+          {
+            ctxt << "TOP CIRCLE: ENDPOINT FEASIBLE\nroll = " << std::setprecision(1)
+                 << fv.rep_roll_deg << " deg\ncolumn clearance = " << std::setprecision(1)
+                 << fv.best_column_distance * 1000.0 << " mm";
+          }
+          else
+          {
+            ctxt << "TOP CIRCLE: BLOCKED\nbest column distance = " << std::setprecision(1)
+                 << fv.best_column_distance * 1000.0 << " mm\n" << fv.dominant_pair;
+          }
+        }
+        else
+        {
+          ctxt << (v_free ? "ENDPOINT FEASIBLE" : "BLOCKED") << "\nroll = " << std::setprecision(1)
+               << fv.rep_roll_deg << " deg";
+        }
+        addText(arr, 24, tcp_w.translation() + Eigen::Vector3d(0.0, 0.0, 0.12), ctxt.str(),
+                v_free ? rgba(0.2f, 1.0f, 0.35f, 1.0f) : rgba(1.0f, 0.3f, 0.2f, 1.0f), 0.03,
                 "search/current");
-      addAxes(arr, 21, tcp_w, 0.08, "search/current");
-      std::ostringstream ctxt;
-      ctxt << std::fixed << std::setprecision(3) << "VIEW C / top_circle\nP1.z = " << current->p1z
-           << " m\n";
-      if (c_free)
-      {
-        ctxt << "TOP CIRCLE: ENDPOINT FEASIBLE\nroll = " << std::setprecision(1)
-             << current->c.rep_roll_deg << " deg\ncolumn clearance = " << std::setprecision(1)
-             << current->c.best_column_distance * 1000.0 << " mm";
       }
-      else
-      {
-        ctxt << "TOP CIRCLE: BLOCKED\nbest column distance = " << std::setprecision(1)
-             << current->c.best_column_distance * 1000.0 << " mm\n" << current->c.dominant_pair;
-      }
-      addText(arr, 24, tcp_w.translation() + Eigen::Vector3d(0.0, 0.0, 0.12), ctxt.str(),
-              c_free ? rgba(0.2f, 1.0f, 0.35f, 1.0f) : rgba(1.0f, 0.3f, 0.2f, 1.0f), 0.03,
-              "search/current");
     }
 
     std::ostringstream hud;
@@ -1032,12 +1158,29 @@ struct SearchViz
     addText(arr, 1, Eigen::Vector3d(0.35, 0.55, 1.45), best.str(), rgba(1.0f, 0.92f, 0.35f, 1.0f),
             0.034, "search/best");
 
+    if (contact_valid)
+    {
+      addSphere(arr, 61, contact_world, 0.03, rgba(1.0f, 0.0f, 0.0f, 1.0f), "collision/contact");
+      addText(arr, 62, contact_world + Eigen::Vector3d(0.0, 0.0, 0.05),
+              current && !current->c.dominant_pair.empty() ? current->c.dominant_pair :
+                                                            "forearm_link <-> mounting_column",
+              rgba(1.0f, 0.2f, 0.15f, 1.0f), 0.028, "collision/contact");
+    }
+    else
+    {
+      addDelete(arr, 61, "collision/contact");
+      addDelete(arr, 62, "collision/contact");
+    }
     if (current && current->c.free_ik == 0 && !current->c.dominant_pair.empty() &&
         current->c.dominant_pair != "none")
     {
       addText(arr, 60, column_center + Eigen::Vector3d(0.14, 0.16, 0.20),
               std::string("Collision: ") + current->c.dominant_pair, rgba(1.0f, 0.2f, 0.15f, 1.0f),
               0.032, "collision/warning");
+    }
+    else
+    {
+      addDelete(arr, 60, "collision/warning");
     }
     marker_pub->publish(arr);
     launched_rviz_markers = true;
@@ -1046,11 +1189,34 @@ struct SearchViz
   void showHeight(const MountResult& r, const std::string& extra, bool pause)
   {
     noteResult(r);
+    active_view = "C";
+    refreshContact(r.c.free_ik > 0 ? std::map<std::string, double>{} : r.c.rep_joints);
+    if (r.c.free_ik > 0)
+    {
+      contact_valid = false;
+    }
     publishMarkers(&r, extra);
     publishGhost(r.c.rep_joints, r.c.free_ik > 0);
     if (enabled && pause && delay_sec > 0.0)
     {
       std::this_thread::sleep_for(std::chrono::duration<double>(delay_sec));
+    }
+  }
+
+  void showValidation(const MountResult& r, const std::string& view, const std::string& extra)
+  {
+    active_view = view;
+    const ViewEval& fv = focused(r);
+    refreshContact(fv.free_ik > 0 ? std::map<std::string, double>{} : fv.rep_joints);
+    if (fv.free_ik > 0)
+    {
+      contact_valid = false;
+    }
+    publishMarkers(&r, extra);
+    publishGhost(fv.rep_joints, fv.free_ik > 0);
+    if (enabled && delay_sec > 0.0)
+    {
+      std::this_thread::sleep_for(std::chrono::duration<double>(std::min(delay_sec, 0.8)));
     }
   }
 
@@ -1060,24 +1226,31 @@ struct SearchViz
     {
       return;
     }
-    moveit_task_constructor_msgs::msg::Solution sol_msg;
-    task.solutions().front()->toMsg(sol_msg, &task.introspection());
-    moveit_msgs::msg::DisplayTrajectory dt;
-    if (lift_scene)
+    try
     {
-      dt.model_id = lift_scene->getRobotModel()->getName();
-    }
-    dt.trajectory_start = sol_msg.start_scene.robot_state;
-    for (const auto& sub : sol_msg.sub_trajectory)
-    {
-      if (!sub.trajectory.joint_trajectory.points.empty() ||
-          !sub.trajectory.multi_dof_joint_trajectory.points.empty())
+      moveit_task_constructor_msgs::msg::Solution sol_msg;
+      task.solutions().front()->toMsg(sol_msg, &task.introspection());
+      moveit_msgs::msg::DisplayTrajectory dt;
+      if (lift_scene)
       {
-        dt.trajectory.push_back(sub.trajectory);
+        dt.model_id = lift_scene->getRobotModel()->getName();
       }
+      dt.trajectory_start = sol_msg.start_scene.robot_state;
+      for (const auto& sub : sol_msg.sub_trajectory)
+      {
+        if (!sub.trajectory.joint_trajectory.points.empty() ||
+            !sub.trajectory.multi_dof_joint_trajectory.points.empty())
+        {
+          dt.trajectory.push_back(sub.trajectory);
+        }
+      }
+      traj_pub->publish(dt);
+      task.publishAllSolutions(false);
     }
-    traj_pub->publish(dt);
-    task.publishAllSolutions(false);
+    catch (const std::exception& ex)
+    {
+      (void)ex;
+    }
   }
 
   void holdFinal()
@@ -1098,8 +1271,9 @@ bool planPrefixToView(const rclcpp::Node::SharedPtr& node, const LayoutConfig& l
                       double object_height, double object_radius, double planning_time, int attempts,
                       SearchViz* viz = nullptr)
 {
+  const bool vis = viz && viz->enabled;
   const Eigen::Isometry3d t_rel = t_cand.inverse() * layout.t_cur;
-  moveit::task_constructor::Task task("", false);
+  moveit::task_constructor::Task task("", vis);
   task.setName("FR3 STEP11F " + view_name);
   task.loadRobotModel(node);
   RelocateFn relocate = [&layout, t_cand](const planning_scene::PlanningScenePtr& scene) {
@@ -1123,9 +1297,18 @@ bool planPrefixToView(const rclcpp::Node::SharedPtr& node, const LayoutConfig& l
   {
     task.init();
     const bool ok = task.plan(static_cast<size_t>(std::max(1, attempts))) && task.numSolutions() > 0;
-    if (ok && viz)
+    if (ok && vis)
     {
-      viz->publishTaskTrajectory(task);
+      try
+      {
+        viz->publishTaskTrajectory(task);
+      }
+      catch (const std::exception& ex)
+      {
+        RCLCPP_WARN(node->get_logger(),
+                    "prefix+view %s trajectory publish failed (observational only): %s",
+                    view_name.c_str(), ex.what());
+      }
     }
     return ok;
   }
@@ -1146,8 +1329,9 @@ bool planTransition(const rclcpp::Node::SharedPtr& node, const LayoutConfig& lay
                     double object_height, double object_radius, double planning_time, int attempts,
                     SearchViz* viz = nullptr)
 {
+  const bool vis = viz && viz->enabled;
   const Eigen::Isometry3d t_rel = t_cand.inverse() * layout.t_cur;
-  moveit::task_constructor::Task task("", false);
+  moveit::task_constructor::Task task("", vis);
   task.setName("FR3 STEP11F " + edge);
   task.loadRobotModel(node);
   RelocateFn relocate = [&layout, t_cand](const planning_scene::PlanningScenePtr& scene) {
@@ -1179,9 +1363,18 @@ bool planTransition(const rclcpp::Node::SharedPtr& node, const LayoutConfig& lay
   {
     task.init();
     const bool ok = task.plan(static_cast<size_t>(std::max(1, attempts))) && task.numSolutions() > 0;
-    if (ok && viz)
+    if (ok && vis)
     {
-      viz->publishTaskTrajectory(task);
+      try
+      {
+        viz->publishTaskTrajectory(task);
+      }
+      catch (const std::exception& ex)
+      {
+        RCLCPP_WARN(node->get_logger(),
+                    "transition %s trajectory publish failed (observational only): %s", edge.c_str(),
+                    ex.what());
+      }
     }
     return ok;
   }
@@ -1258,6 +1451,9 @@ int main(int argc, char** argv)
   const double vis_hold = node->has_parameter("visualization_hold_seconds") ?
                               node->get_parameter("visualization_hold_seconds").as_double() :
                               8.0;
+  const double validate_only_p1z =
+      node->has_parameter("validate_only_p1z") ? node->get_parameter("validate_only_p1z").as_double() :
+                                                0.0;
   const auto all_rolls = readRollPoses(node);
 
   auto param_node = rclcpp::Node::make_shared("fr3_mtc_mount_layout_search_params");
@@ -1381,8 +1577,18 @@ int main(int argc, char** argv)
   viz.hold_sec = vis_hold;
   viz.lift_scene = lift_scene;
   viz.t_world_base = layout.t_cur;
+  viz.t_tcp_object = layout.cfg.t_tcp_object;
+  viz.top_normal_local = layout.view_c.normal_in_object;
   viz.d1 = d1;
   viz.up = preferred_up;
+  for (const auto& roll : all_rolls)
+  {
+    if (roll.view == "top_circle" && std::abs(roll.roll_deg) < 1e-9)
+    {
+      viz.canonical_c_object_world = layout.t_cur * poseToIso(roll.object.pose);
+      break;
+    }
+  }
   viz.table_center = layout.table_world.translation();
   viz.table_size = layout.table_size;
   viz.column_center = layout.column_world.translation();
@@ -1414,6 +1620,37 @@ int main(int argc, char** argv)
     return 1;
   }
 
+  const bool orientation_audit_only = getBoolParam(node, "orientation_audit_only", false);
+  if (orientation_audit_only)
+  {
+    const Eigen::Vector3d n_actual =
+        (viz.canonical_c_object_world.linear() * viz.top_normal_local).normalized();
+    const Eigen::Vector3d n_expected(0.0, -1.0, 0.0);
+    const double face_dot = std::max(-1.0, std::min(1.0, n_actual.dot(n_expected)));
+    const double face_err_deg = std::acos(face_dot) * 180.0 / M_PI;
+    RCLCPP_INFO(node->get_logger(), "========== ORIENTATION AUDIT ONLY (no P1.z search) ==========");
+    RCLCPP_INFO(node->get_logger(), "actual n_top_world = [%.9f, %.9f, %.9f]", n_actual.x(),
+                n_actual.y(), n_actual.z());
+    RCLCPP_INFO(node->get_logger(), "expected = [0, -1, 0]  angle=%.6f deg", face_err_deg);
+    viz.phase = "ORIENTATION AUDIT";
+    MountResult dummy;
+    dummy.p1z = p1.z();
+    viz.publishMarkers(&dummy, "ORIENTATION AUDIT\nP1.z fixed at 1.10\nNO HEIGHT SEARCH");
+    std::ofstream yaml("/tmp/fr3_top_circle_orientation_audit.yaml");
+    yaml << std::fixed << std::setprecision(9);
+    yaml << "status: " << (face_err_deg < 1.0 ? "PASS" : "BUG") << "\n";
+    yaml << "search_paused: true\n";
+    yaml << "actual_n_top_world: [" << n_actual.x() << ", " << n_actual.y() << ", " << n_actual.z()
+         << "]\n";
+    yaml << "expected: [0.0, -1.0, 0.0]\n";
+    yaml << "angle_error_deg: " << face_err_deg << "\n";
+    yaml << "d1_interpreted_as: FACE_OUTWARD_NORMAL\n";
+    yaml.close();
+    viz.holdFinal();
+    shutdownSpinner(executor, spinner);
+    return face_err_deg < 1.0 ? 0 : 4;
+  }
+
   const double p1z0 = p1.z();
   std::vector<MountResult> coarse;
   std::vector<MountResult> refine_cm;
@@ -1432,6 +1669,30 @@ int main(int argc, char** argv)
     return r;
   };
 
+  if (validate_only_p1z > 0.5)
+  {
+    RCLCPP_INFO(node->get_logger(),
+                "validate_only_p1z=%.3f — skip coarse/refine, evaluate this height then prefix",
+                validate_only_p1z);
+    viz.phase = "VALIDATE ONLY";
+    viz.height_total = 1;
+    viz.height_index = 1;
+    auto r = consider(evaluateHeight(*lift_scene, layout, all_rolls, validate_only_p1z, 5.0,
+                                     node->get_logger(), true),
+                      true);
+    refine_mm.push_back(r);
+    if (r.three_view)
+    {
+      pass_boundary = r.p1z;
+      fail_boundary = r.p1z - 0.005;
+    }
+    else
+    {
+      fail_boundary = r.p1z;
+    }
+  }
+  else
+  {
   RCLCPP_INFO(node->get_logger(), "----- coarse P1.z sweep (10 deg roll, +0.05 m) -----");
   viz.phase = "COARSE 5 CM";
   viz.height_total = 9;
@@ -1470,26 +1731,29 @@ int main(int argc, char** argv)
     viz.phase = "1 CM REFINEMENT";
     viz.height_index = 0;
     viz.height_total = 5;
-    for (int k = 1; k <= 5; ++k)
     {
-      const double z = fail_boundary + 0.01 * static_cast<double>(k);
-      if (z > pass_boundary + 1e-12)
+      const double refine_from = fail_boundary;
+      for (int k = 1; k <= 5; ++k)
       {
-        break;
-      }
-      ++viz.height_index;
-      auto r = consider(evaluateHeight(*lift_scene, layout, all_rolls, z, 5.0, node->get_logger(),
-                                       false),
-                        true);
-      refine_cm.push_back(r);
-      if (!r.three_view)
-      {
-        fail_boundary = z;
-      }
-      else
-      {
-        pass_boundary = z;
-        break;
+        const double z = refine_from + 0.01 * static_cast<double>(k);
+        if (z > pass_boundary + 1e-12)
+        {
+          break;
+        }
+        ++viz.height_index;
+        auto r = consider(evaluateHeight(*lift_scene, layout, all_rolls, z, 5.0, node->get_logger(),
+                                         false),
+                          true);
+        refine_cm.push_back(r);
+        if (!r.three_view)
+        {
+          fail_boundary = z;
+        }
+        else
+        {
+          pass_boundary = z;
+          break;
+        }
       }
     }
   }
@@ -1500,26 +1764,29 @@ int main(int argc, char** argv)
     viz.phase = "5 MM REFINEMENT";
     viz.height_index = 0;
     viz.height_total = 2;
-    for (int k = 1; k <= 2; ++k)
     {
-      const double z = fail_boundary + 0.005 * static_cast<double>(k);
-      if (z > pass_boundary + 1e-12)
+      const double refine_from = fail_boundary;
+      for (int k = 1; k <= 2; ++k)
       {
-        break;
-      }
-      ++viz.height_index;
-      auto r = consider(evaluateHeight(*lift_scene, layout, all_rolls, z, 5.0, node->get_logger(),
-                                       false),
-                        true);
-      refine_mm.push_back(r);
-      if (!r.three_view)
-      {
-        fail_boundary = z;
-      }
-      else
-      {
-        pass_boundary = z;
-        break;
+        const double z = refine_from + 0.005 * static_cast<double>(k);
+        if (z > pass_boundary + 1e-12)
+        {
+          break;
+        }
+        ++viz.height_index;
+        auto r = consider(evaluateHeight(*lift_scene, layout, all_rolls, z, 5.0, node->get_logger(),
+                                         false),
+                          true);
+        refine_mm.push_back(r);
+        if (!r.three_view)
+        {
+          fail_boundary = z;
+        }
+        else
+        {
+          pass_boundary = z;
+          break;
+        }
       }
     }
   }
@@ -1531,6 +1798,7 @@ int main(int argc, char** argv)
                          true);
     refine_cm.push_back(fine);
   }
+  }  // full height search (not validate_only_p1z)
 
   std::string a_prefix = "NOT TESTED";
   std::string b_prefix = "NOT TESTED";
@@ -1558,26 +1826,33 @@ int main(int argc, char** argv)
       goal_c = br.c.best_free->tcp_target;
     }
     viz.phase = "VALIDATING VIEW A";
-    viz.publishMarkers(&br, "VALIDATING VIEW A");
+    viz.showValidation(br, "A", "VALIDATING VIEW A");
     a_prefix = planPrefixToView(node, layout, layout.t_cur, object_scene, pregrasp, grasp, lift,
                                 goal_a, "A", object_height, object_radius, planning_time, path_attempts,
                                 &viz) ?
                    "PASS" :
                    "FAIL";
+    viz.showValidation(br, "A",
+                       a_prefix == "PASS" ? "Home → Lift → A\nPASS" : "Home → Lift → A\nPATH FAIL");
     viz.phase = "VALIDATING VIEW B";
-    viz.publishMarkers(&br, std::string("A prefix: ") + a_prefix + "\nVALIDATING VIEW B");
+    viz.showValidation(br, "B", std::string("A prefix: ") + a_prefix + "\nVALIDATING VIEW B");
     b_prefix = planPrefixToView(node, layout, layout.t_cur, object_scene, pregrasp, grasp, lift,
                                 goal_b, "B", object_height, object_radius, planning_time, path_attempts,
                                 &viz) ?
                    "PASS" :
                    "FAIL";
+    viz.showValidation(br, "B",
+                       b_prefix == "PASS" ? "Home → Lift → B\nPASS" : "Home → Lift → B\nPATH FAIL");
     viz.phase = "VALIDATING VIEW C";
-    viz.publishMarkers(&br, std::string("A: ") + a_prefix + "  B: " + b_prefix + "\nVALIDATING VIEW C");
+    viz.showValidation(br, "C",
+                       std::string("A: ") + a_prefix + "  B: " + b_prefix + "\nVALIDATING VIEW C");
     c_prefix = planPrefixToView(node, layout, layout.t_cur, object_scene, pregrasp, grasp, lift,
                                 goal_c, "C", object_height, object_radius, planning_time, path_attempts,
                                 &viz) ?
                    "PASS" :
                    "FAIL";
+    viz.showValidation(br, "C",
+                       c_prefix == "PASS" ? "Home → Lift → C\nPASS" : "Home → Lift → C\nPATH FAIL");
     const std::vector<std::pair<std::string, std::pair<geometry_msgs::msg::PoseStamped,
                                                        geometry_msgs::msg::PoseStamped>>>
         trans = { { "A->B", { goal_a, goal_b } }, { "A->C", { goal_a, goal_c } },
@@ -1588,13 +1863,17 @@ int main(int argc, char** argv)
       for (const auto& e : trans)
       {
         viz.phase = std::string("TESTING: ") + e.first;
-        viz.publishMarkers(&br, std::string("TESTING:\n") + e.first);
+        const std::string src_view = e.first.substr(0, 1);
+        const std::string dst_view = e.first.substr(e.first.size() - 1, 1);
+        viz.showValidation(br, src_view, std::string("TESTING:\n") + e.first);
         const bool ok =
             planTransition(node, layout, layout.t_cur, object_scene, pregrasp, grasp, lift,
                            e.second.first, e.second.second, e.first, object_height, object_radius,
                            planning_time, path_attempts, &viz);
         edges[e.first] = ok ? "PASS" : "FAIL";
         edges_pass += ok ? 1 : 0;
+        viz.showValidation(br, dst_view,
+                           std::string("TESTING:\n") + e.first + "\n" + (ok ? "PASS" : "FAIL"));
       }
     }
     std::ostringstream final_txt;
@@ -1605,6 +1884,7 @@ int main(int argc, char** argv)
               << "\nHome→Lift→A: " << a_prefix << "\nHome→Lift→B: " << b_prefix
               << "\nHome→Lift→C: " << c_prefix;
     viz.phase = "FINAL HEIGHT CANDIDATE";
+    viz.active_view = "C";
     viz.publishMarkers(&br, final_txt.str());
     viz.publishGhost(br.c.rep_joints, br.c.free_ik > 0);
   }

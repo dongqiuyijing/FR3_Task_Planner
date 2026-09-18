@@ -809,7 +809,8 @@ moveit_msgs::msg::DisplayTrajectory makeDisplayTrajectory(
 visualization_msgs::msg::MarkerArray buildStaticMarkers(
     const Eigen::Vector3d& p1, const Eigen::Vector3d& d1, const Eigen::Vector3d& up,
     const Eigen::Isometry3d& a_tcp, const Eigen::Isometry3d& b_tcp,
-    const Eigen::Isometry3d& c_tcp, const WorkcellGeom& workcell, const GhostPick& ghost,
+    const Eigen::Isometry3d& c_tcp, const Eigen::Isometry3d& t_tcp_object,
+    const WorkcellGeom& workcell, const GhostPick& ghost,
     const std::string& stage_text)
 {
   visualization_msgs::msg::MarkerArray arr;
@@ -843,11 +844,19 @@ visualization_msgs::msg::MarkerArray buildStaticMarkers(
   addText(arr, 11, p1 + Eigen::Vector3d(0.0, 0.0, 0.07), "P1 / INSPECTION CENTER",
           rgba(0.8f, 0.95f, 1.0f, 1.0f), 0.038, "inspection/p1");
   addArrow(arr, 12, p1, p1 + 0.20 * d1, rgba(1.0f, 0.85f, 0.1f, 1.0f), "inspection/d1");
-  addText(arr, 13, p1 + 0.23 * d1, "D1 / FACE NORMAL / CAMERA DIRECTION",
+  addText(arr, 13, p1 + 0.23 * d1, "EXPECTED CAMERA-FACING DIRECTION\nworld -Y (face outward)",
           rgba(1.0f, 0.9f, 0.3f, 1.0f), 0.032, "inspection/d1");
   addArrow(arr, 14, p1, p1 + 0.20 * up, rgba(0.85f, 0.25f, 0.95f, 1.0f), "inspection/up");
   addText(arr, 15, p1 + 0.23 * up, "UP / WORLD +Z", rgba(0.95f, 0.7f, 1.0f, 1.0f), 0.032,
           "inspection/up");
+  {
+    const Eigen::Isometry3d c_obj = c_tcp * t_tcp_object;
+    const Eigen::Vector3d n_actual = (c_obj.linear() * Eigen::Vector3d::UnitZ()).normalized();
+    addArrow(arr, 70, p1, p1 + 0.24 * n_actual, rgba(0.15f, 1.0f, 0.85f, 1.0f),
+             "inspection/actual_face_normal");
+    addText(arr, 71, p1 + 0.27 * n_actual, "TOP CIRCLE FACE NORMAL\nR*object+Z (actual)",
+            rgba(0.2f, 1.0f, 0.85f, 1.0f), 0.028, "inspection/actual_face_normal");
+  }
 
   addSphere(arr, 20, a_tcp.translation(), 0.018, rgba(0.1f, 0.85f, 0.2f, 0.95f),
             "inspection/view_a");
@@ -988,8 +997,8 @@ int main(int argc, char** argv)
   }
 
   auto publish_vis = [&]() {
-    auto markers = buildStaticMarkers(p1, d1, preferred_up, *a_tcp, *b_tcp, *c_tcp, workcell,
-                                      *ghost_pick, *stage_text);
+    auto markers = buildStaticMarkers(p1, d1, preferred_up, *a_tcp, *b_tcp, *c_tcp, poseToIso(tcp_object.pose),
+                                      workcell, *ghost_pick, *stage_text);
     marker_pub->publish(markers);
     if (!ghost_msg->state.joint_state.name.empty() ||
         !ghost_msg->state.multi_dof_joint_state.joint_names.empty())
