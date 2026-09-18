@@ -1,0 +1,224 @@
+import os
+import sys
+
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    LogInfo,
+    OpaqueFunction,
+    SetEnvironmentVariable,
+    TimerAction,
+)
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+from moveit_configs_utils import MoveItConfigsBuilder
+
+_LAUNCH_DIR = os.path.dirname(__file__)
+if _LAUNCH_DIR not in sys.path:
+    sys.path.insert(0, _LAUNCH_DIR)
+
+from inspection_view_geometry import (  # noqa: E402
+    cpp_inspection_vectors,
+    generate_roll_candidates,
+    load_stage6_geometry,
+    pose_in_planning_frame,
+)
+from stage4_pregrasp import _pose_to_dict, compute_stage4_pregrasp_params  # noqa: E402
+
+
+_ROS_DOMAIN_ID = "77"
+
+
+def _flatten_top_circle_rolls(geo, roll_step_deg: float, planning_frame: str) -> dict:
+    views = []
+    degs = []
+    indexes = []
+    obj = {key: [] for key in ("x", "y", "z", "qx", "qy", "qz", "qw")}
+    tcp = {key: [] for key in ("x", "y", "z", "qx", "qy", "qz", "qw")}
+    for cand in generate_roll_candidates(
+        geo["targets"]["top_circle"], geo["tcp_t_object"], roll_step_deg
+    ):
+        object_pose = pose_in_planning_frame(cand.object_pose, geo, planning_frame)
+        tcp_pose = pose_in_planning_frame(cand.tcp_pose, geo, planning_frame)
+        views.append("top_circle")
+        degs.append(float(cand.roll_deg))
+        indexes.append(float(cand.pose_index))
+        obj["x"].append(float(object_pose.position.x))
+        obj["y"].append(float(object_pose.position.y))
+        obj["z"].append(float(object_pose.position.z))
+        obj["qx"].append(float(object_pose.orientation.x))
+        obj["qy"].append(float(object_pose.orientation.y))
+        obj["qz"].append(float(object_pose.orientation.z))
+        obj["qw"].append(float(object_pose.orientation.w))
+        tcp["x"].append(float(tcp_pose.position.x))
+        tcp["y"].append(float(tcp_pose.position.y))
+        tcp["z"].append(float(tcp_pose.position.z))
+        tcp["qx"].append(float(tcp_pose.orientation.x))
+        tcp["qy"].append(float(tcp_pose.orientation.y))
+        tcp["qz"].append(float(tcp_pose.orientation.z))
+        tcp["qw"].append(float(tcp_pose.orientation.w))
+    return {
+        "roll_views": views,
+        "roll_degs": degs,
+        "roll_pose_index": indexes,
+        "roll_obj_x": obj["x"],
+        "roll_obj_y": obj["y"],
+        "roll_obj_z": obj["z"],
+        "roll_obj_qx": obj["qx"],
+        "roll_obj_qy": obj["qy"],
+        "roll_obj_qz": obj["qz"],
+        "roll_obj_qw": obj["qw"],
+        "roll_tcp_x": tcp["x"],
+        "roll_tcp_y": tcp["y"],
+        "roll_tcp_z": tcp["z"],
+        "roll_tcp_qx": tcp["qx"],
+        "roll_tcp_qy": tcp["qy"],
+        "roll_tcp_qz": tcp["qz"],
+        "roll_tcp_qw": tcp["qw"],
+    }
+
+
+def _launch_nodes(context, *args, **kwargs):
+    config_file = LaunchConfiguration("config_file").perform(context)
+    roll_step_deg = float(LaunchConfiguration("roll_step_deg").perform(context))
+    params = compute_stage4_pregrasp_params(config_file or None)
+    geo = load_stage6_geometry(config_file or None)
+    params["roll_step_deg"] = roll_step_deg
+    params["max_ik_solutions_per_pose"] = int(
+        LaunchConfiguration("max_ik_solutions_per_pose").perform(context)
+    )
+    params["min_ik_solution_distance"] = float(
+        LaunchConfiguration("min_ik_solution_distance").perform(context)
+    )
+    params["independent_sweeps"] = int(
+        LaunchConfiguration("independent_sweeps").perform(context)
+    )
+    params["phase_b_step_deg"] = float(
+        LaunchConfiguration("phase_b_step_deg").perform(context)
+    )
+    params["phase_b_window_deg"] = float(
+        LaunchConfiguration("phase_b_window_deg").perform(context)
+    )
+    params["path_attempts"] = int(LaunchConfiguration("path_attempts").perform(context))
+    params["max_path_candidates"] = int(
+        LaunchConfiguration("max_path_candidates").perform(context)
+    )
+    params["diagnostic_output_path"] = LaunchConfiguration("diagnostic_output_path").perform(
+        context
+    )
+    params.update(cpp_inspection_vectors(geo))
+    planning_frame = str(params.get("planning_frame", "base_link"))
+    view = geo["targets"]["top_circle"].view
+    params["top_circle_center_x"] = float(view.center_in_object[0])
+    params["top_circle_center_y"] = float(view.center_in_object[1])
+    params["top_circle_center_z"] = float(view.center_in_object[2])
+    params["top_circle_normal_x"] = float(view.normal_in_object[0])
+    params["top_circle_normal_y"] = float(view.normal_in_object[1])
+    params["top_circle_normal_z"] = float(view.normal_in_object[2])
+    params["top_circle_up_x"] = float(view.up_in_object[0])
+    params["top_circle_up_y"] = float(view.up_in_object[1])
+    params["top_circle_up_z"] = float(view.up_in_object[2])
+    params.update(_flatten_top_circle_rolls(geo, roll_step_deg, planning_frame))
+
+    moveit_config = (
+        MoveItConfigsBuilder(
+            "fairino3_v6_robot",
+            package_name="fairino3_v6_moveit2_config",
+        )
+        .planning_pipelines(pipelines=["ompl", "pilz_industrial_motion_planner"])
+        .to_moveit_configs()
+    )
+    delay = float(LaunchConfiguration("search_delay").perform(context))
+    start_stage4 = LaunchConfiguration("start_stage4").perform(context).lower() == "true"
+    if start_stage4 and delay < 1.0:
+        delay = 18.0
+    n_top = len(params["roll_degs"])
+    search = Node(
+        package="fr_task_planner",
+        executable="fr3_mtc_dense_top_circle_search",
+        name="fr3_mtc_dense_top_circle_search",
+        output="screen",
+        parameters=[
+            moveit_config.robot_description,
+            moveit_config.robot_description_semantic,
+            moveit_config.robot_description_kinematics,
+            moveit_config.joint_limits,
+            moveit_config.planning_pipelines,
+            moveit_config.pilz_cartesian_limits,
+            {"use_sim_time": LaunchConfiguration("use_sim_time")},
+            params,
+        ],
+    )
+    delayed = [search]
+    if delay > 0.0:
+        delayed = [TimerAction(period=delay, actions=delayed)]
+    return [
+        LogInfo(
+            msg="\n".join(
+                [
+                    "========== STEP 11E DENSE TOP_CIRCLE SEARCH ==========",
+                    f"ROS_DOMAIN_ID={_ROS_DOMAIN_ID}",
+                    f"top_circle roll samples: {n_top} at {roll_step_deg} deg",
+                    "PLAN / IK / COLLISION ONLY. No robot execution.",
+                ]
+            )
+        ),
+        *delayed,
+    ]
+
+
+def generate_launch_description():
+    source_config = os.path.expanduser(
+        "~/fairino_ws/src/fr_control/config/stage4_config.yaml"
+    )
+    default_config = (
+        source_config
+        if os.path.isfile(source_config)
+        else os.path.join(
+            get_package_share_directory("fr_control"),
+            "config",
+            "stage4_config.yaml",
+        )
+    )
+    control_share = get_package_share_directory("fr_control")
+    return LaunchDescription(
+        [
+            SetEnvironmentVariable(name="ROS_DOMAIN_ID", value=_ROS_DOMAIN_ID),
+            DeclareLaunchArgument("use_sim_time", default_value="true"),
+            DeclareLaunchArgument("start_stage4", default_value="true"),
+            DeclareLaunchArgument("headless", default_value="true"),
+            DeclareLaunchArgument("moveit_delay", default_value="8.0"),
+            DeclareLaunchArgument("search_delay", default_value="18.0"),
+            DeclareLaunchArgument("config_file", default_value=default_config),
+            DeclareLaunchArgument("roll_step_deg", default_value="5.0"),
+            DeclareLaunchArgument("max_ik_solutions_per_pose", default_value="16"),
+            DeclareLaunchArgument("min_ik_solution_distance", default_value="0.1"),
+            DeclareLaunchArgument("independent_sweeps", default_value="3"),
+            DeclareLaunchArgument("phase_b_step_deg", default_value="1.0"),
+            DeclareLaunchArgument("phase_b_window_deg", default_value="5.0"),
+            DeclareLaunchArgument("path_attempts", default_value="3"),
+            DeclareLaunchArgument("max_path_candidates", default_value="5"),
+            DeclareLaunchArgument(
+                "diagnostic_output_path",
+                default_value="/tmp/fr3_step11e_dense_top_circle.yaml",
+            ),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(control_share, "launch", "stage4_full.launch.py")
+                ),
+                launch_arguments={
+                    "use_sim_time": LaunchConfiguration("use_sim_time"),
+                    "use_rviz": "false",
+                    "headless": LaunchConfiguration("headless"),
+                    "config_file": LaunchConfiguration("config_file"),
+                    "moveit_delay": LaunchConfiguration("moveit_delay"),
+                }.items(),
+                condition=IfCondition(LaunchConfiguration("start_stage4")),
+            ),
+            OpaqueFunction(function=_launch_nodes),
+        ]
+    )

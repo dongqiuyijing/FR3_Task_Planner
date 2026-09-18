@@ -69,6 +69,20 @@ class InspectionRollCandidateTest(unittest.TestCase):
             [0.0, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0, 120.0, -120.0, 150.0, -150.0, 180.0],
         )
 
+    def test_five_degree_grid_has_seventy_two_unique_angles(self) -> None:
+        angles = roll_sample_degrees(5.0)
+        self.assertEqual(angles[0], 0.0)
+        self.assertEqual(len(angles), 72)
+        self.assertEqual(len(set(angles)), 72)
+        self.assertEqual(angles[1], 5.0)
+        self.assertEqual(angles[2], -5.0)
+        self.assertIn(180.0, angles)
+        self.assertNotIn(-180.0, angles)
+        five_deg = generate_roll_candidates(
+            self.data["targets"]["top_circle"], self.data["tcp_t_object"], 5.0
+        )
+        self.assertEqual(len(five_deg), 72)
+
     def test_canonicalize_plus_minus_180(self) -> None:
         self.assertEqual(canonicalize_roll_deg(180.0), 180.0)
         self.assertEqual(canonicalize_roll_deg(-180.0), 180.0)

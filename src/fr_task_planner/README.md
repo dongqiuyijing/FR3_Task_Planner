@@ -628,3 +628,19 @@ ros2 launch fr_task_planner mtc_fr3_workcell_demo.launch.py
 
 Does not execute trajectories. Does not start real hardware.
 Dump: `/tmp/fr3_step11d_workcell.yaml`
+
+# STEP 11E — Dense Top-Circle Roll / IK Feasibility Search
+
+Search only. Does not move the workcell, P1, D1, up, column, or ACM.
+Default roll step is still 30° for STEP 10/11 tests. This launch passes 5°.
+
+```bash
+cd ~/fr_task_ws
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+export ROS_DOMAIN_ID=77
+ros2 launch fr_task_planner mtc_fr3_dense_top_circle_search.launch.py
+```
+
+Dump: `/tmp/fr3_step11e_dense_top_circle.yaml`
