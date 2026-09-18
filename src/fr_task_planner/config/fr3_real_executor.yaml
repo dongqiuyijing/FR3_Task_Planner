@@ -1,0 +1,38 @@
+# STEP 13 real frozen-trajectory executor defaults.
+# Controller / action names are copied from the current FAIRINO real stack:
+#   fairino3_v6_moveit2_config/config/moveit_controllers_real.yaml
+#   fairino3_v6_moveit2_config/config/ros2_controllers_real.yaml
+# Gripper service is copied from:
+#   fr_control/config/gripper.yaml
+# Do not treat these as a second source of Home / A / B / C geometry.
+
+controller_name: fairino3_controller
+trajectory_action_ns: follow_joint_trajectory
+trajectory_action_name: /fairino3_controller/follow_joint_trajectory
+controller_joint_names: [j1, j2, j3, j4, j5, j6]
+
+gripper_service_name: /fairino_gripper/command
+gripper_id: 1
+gripper_close_position: 85
+gripper_velocity: 20
+gripper_force: 20
+gripper_max_time_ms: 5000
+gripper_block: 1
+gripper_type: 0
+
+planning_group: fairino3_v6_group
+planning_frame: base_link
+attach_link: gripper_tcp
+object_name: small_part
+table_name: table
+touch_links:
+  - gripper_base_link
+  - rail_155
+  - slider_l
+  - slider_r
+  - finger_l
+  - finger_r
+  - gripper_gap_link
+
+hardware_identifier: FR3RealSystem
+sim_hardware_identifier: GazeboSimSystem

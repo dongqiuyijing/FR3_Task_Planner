@@ -22,6 +22,9 @@ find_package(visualization_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometric_shapes REQUIRED)
 find_package(yaml-cpp REQUIRED)
+find_package(control_msgs REQUIRED)
+find_package(rclcpp_action REQUIRED)
+find_package(fairino_msgs REQUIRED)
 
 add_executable(fr3_mtc_smoke_test src/mtc_fr3_smoke_test.cpp)
 ament_target_dependencies(fr3_mtc_smoke_test
@@ -240,15 +243,29 @@ ament_target_dependencies(fr3_mtc_mount_layout_search
   moveit_task_constructor_msgs
 )
 
-add_executable(fr3_mtc_complete_abc_search
-  src/mtc_fr3_complete_abc_search.cpp
+add_library(fr_task_planner_trajectory
   src/winner_trajectory_io.cpp
+  src/frozen_executor.cpp
 )
+target_include_directories(fr_task_planner_trajectory PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+)
+target_link_libraries(fr_task_planner_trajectory yaml-cpp)
+ament_target_dependencies(fr_task_planner_trajectory
+  rclcpp
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  geometric_shapes
+)
+
+add_executable(fr3_mtc_complete_abc_search src/mtc_fr3_complete_abc_search.cpp)
 target_include_directories(fr3_mtc_complete_abc_search PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(fr3_mtc_complete_abc_search
   fr_task_planner_endpoints
+  fr_task_planner_trajectory
   yaml-cpp
 )
 ament_target_dependencies(fr3_mtc_complete_abc_search
@@ -263,6 +280,45 @@ ament_target_dependencies(fr3_mtc_complete_abc_search
   moveit_ros_planning_interface
   moveit_task_constructor_core
   moveit_task_constructor_msgs
+)
+
+add_executable(fr3_real_frozen_trajectory_executor
+  src/fr3_real_frozen_trajectory_executor.cpp
+)
+target_include_directories(fr3_real_frozen_trajectory_executor PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(fr3_real_frozen_trajectory_executor
+  fr_task_planner_trajectory
+  yaml-cpp
+)
+ament_target_dependencies(fr3_real_frozen_trajectory_executor
+  rclcpp
+  rclcpp_action
+  sensor_msgs
+  trajectory_msgs
+  control_msgs
+  moveit_msgs
+  fairino_msgs
+)
+
+add_executable(test_fr3_frozen_executor test/test_fr3_frozen_executor.cpp)
+target_include_directories(test_fr3_frozen_executor PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_fr3_frozen_executor
+  fr_task_planner_trajectory
+  yaml-cpp
+)
+ament_target_dependencies(test_fr3_frozen_executor
+  rclcpp
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  geometric_shapes
+)
+target_compile_definitions(test_fr3_frozen_executor PRIVATE
+  FR_TASK_PLANNER_TRAJ_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step12c_tilted_camera_winner_trajectory.yaml"
 )
 
 install(TARGETS
@@ -281,6 +337,8 @@ install(TARGETS
   fr3_mtc_dense_top_circle_search
   fr3_mtc_mount_layout_search
   fr3_mtc_complete_abc_search
+  fr3_real_frozen_trajectory_executor
+  test_fr3_frozen_executor
   DESTINATION lib/${PROJECT_NAME}
 )
 
