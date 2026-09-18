@@ -1,5 +1,6 @@
 #include "fr_task_planner/inspection_endpoint_candidates.hpp"
 #include "fr_task_planner/inspection_visibility.hpp"
+#include "fr_task_planner/winner_trajectory_io.hpp"
 
 #include <algorithm>
 #include <array>
@@ -38,6 +39,8 @@
 #include <moveit_msgs/srv/get_planning_scene.hpp>
 #include <moveit_task_constructor_msgs/msg/solution.hpp>
 #include <rclcpp/rclcpp.hpp>
+#include <trajectory_msgs/msg/joint_trajectory.hpp>
+#include <trajectory_msgs/msg/multi_dof_joint_trajectory.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <shape_msgs/msg/solid_primitive.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
@@ -69,6 +72,26 @@ using fr_task_planner::poseToIso;
 using fr_task_planner::RollPose;
 using fr_task_planner::tcpInBase;
 using fr_task_planner::ViewGeom;
+using fr_task_planner::PersistedTrajectory;
+using fr_task_planner::PersistValidation;
+using fr_task_planner::TrajectoryPointRecord;
+using fr_task_planner::TrajectorySegmentRecord;
+using fr_task_planner::WinnerEndpoints;
+using fr_task_planner::attachStandardEvents;
+using fr_task_planner::extractArmPositions;
+using fr_task_planner::fillDerivedTotals;
+using fr_task_planner::isFixedDeployableLogical;
+using fr_task_planner::jointsToVec;
+using fr_task_planner::kLogicalCurrentToHome;
+using fr_task_planner::loadWinnerYaml;
+using fr_task_planner::logicalSegmentFromStage;
+using fr_task_planner::readTrajectoryYaml;
+using fr_task_planner::timesMonotonic;
+using fr_task_planner::validateContinuity;
+using fr_task_planner::validateEndpoints;
+using fr_task_planner::validateRoundTrip;
+using fr_task_planner::winnerMatchesFrozenStep12c;
+using fr_task_planner::writeTrajectoryYaml;
 
 const char* kPlanningGroup = "fairino3_v6_group";
 const char* kPlanningFrame = "base_link";
@@ -1137,6 +1160,560 @@ EdgeResult planJointEdge(const rclcpp::Node::SharedPtr& node, const std::string&
   }
   return out;
 }
+
+std::string fileBaseName(const std::string& path)
+{
+  const auto pos = path.find_last_of('/');
+  return pos == std::string::npos ? path : path.substr(pos + 1);
+}
+
+TrajectoryPointRecord recordFromPoint(const trajectory_msgs::msg::JointTrajectoryPoint& pt)
+{
+  TrajectoryPointRecord rec;
+  rec.positions.assign(pt.positions.begin(), pt.positions.end());
+  rec.velocities.assign(pt.velocities.begin(), pt.velocities.end());
+  rec.accelerations.assign(pt.accelerations.begin(), pt.accelerations.end());
+  rec.sec = pt.time_from_start.sec;
+  rec.nanosec = pt.time_from_start.nanosec;
+  return rec;
+}
+
+void appendMultiDof(const trajectory_msgs::msg::MultiDOFJointTrajectory& md,
+                    TrajectorySegmentRecord& seg)
+{
+  seg.multi_dof_present = !md.joint_names.empty() || !md.points.empty();
+  if (!seg.multi_dof_present)
+  {
+    return;
+  }
+  seg.multi_dof.joint_names = md.joint_names;
+  for (const auto& pt : md.points)
+  {
+    fr_task_planner::MultiDofPointRecord rec;
+    rec.sec = pt.time_from_start.sec;
+    rec.nanosec = pt.time_from_start.nanosec;
+    for (const auto& tf : pt.transforms)
+    {
+      fr_task_planner::MultiDofTransformRecord item;
+      item.translation = { tf.translation.x, tf.translation.y, tf.translation.z };
+      item.rotation_xyzw = { tf.rotation.x, tf.rotation.y, tf.rotation.z, tf.rotation.w };
+      rec.transforms.push_back(item);
+    }
+    seg.multi_dof.points.push_back(rec);
+  }
+}
+
+bool extractPersistedSegments(const moveit::task_constructor::SolutionBase& solution,
+                              PersistedTrajectory& traj, std::string& error)
+{
+  std::vector<const moveit::task_constructor::SolutionBase*> leaves;
+  flattenSolutions(solution, leaves);
+  std::map<std::string, int> logical_count;
+  for (const auto* leaf : leaves)
+  {
+    if (!leaf)
+    {
+      continue;
+    }
+    const std::string stage = (leaf->creator() && !leaf->creator()->name().empty()) ?
+                                  leaf->creator()->name() :
+                                  "unnamed";
+    moveit_task_constructor_msgs::msg::Solution leaf_msg;
+    leaf->toMsg(leaf_msg);
+    std::map<std::string, double> start_j;
+    std::map<std::string, double> end_j;
+    if (leaf->start() && leaf->start()->scene())
+    {
+      start_j = jointsFromState(leaf->start()->scene()->getCurrentState());
+    }
+    if (leaf->end() && leaf->end()->scene())
+    {
+      end_j = jointsFromState(leaf->end()->scene()->getCurrentState());
+    }
+      for (const auto& sub : leaf_msg.sub_trajectory)
+    {
+      const auto& jt = sub.trajectory.joint_trajectory;
+      const auto& md = sub.trajectory.multi_dof_joint_trajectory;
+      const bool has_jt = !jt.points.empty();
+      const bool has_md = !md.joint_names.empty() || !md.points.empty();
+      if (!has_jt && !has_md)
+      {
+        continue;
+      }
+      TrajectorySegmentRecord seg;
+      seg.planning_stage_name = stage;
+      seg.logical_segment = logicalSegmentFromStage(stage);
+      if (seg.logical_segment.empty())
+      {
+        seg.logical_segment = stage;
+      }
+      seg.subsegment_index = logical_count[seg.logical_segment]++;
+      seg.name = seg.subsegment_index == 0 ?
+                     seg.logical_segment :
+                     (seg.logical_segment + "_sub" + std::to_string(seg.subsegment_index));
+      seg.deployable = isFixedDeployableLogical(seg.logical_segment);
+      seg.runtime_replan_required = seg.logical_segment == kLogicalCurrentToHome;
+      seg.joint_names = jt.joint_names;
+      if (has_jt)
+      {
+        if (start_j.empty())
+        {
+          seg.start_joints = extractArmPositions(jt.joint_names, jt.points.front().positions);
+        }
+        else
+        {
+          seg.start_joints = jointsToVec(start_j);
+        }
+        if (end_j.empty())
+        {
+          seg.end_joints = extractArmPositions(jt.joint_names, jt.points.back().positions);
+        }
+        else
+        {
+          seg.end_joints = jointsToVec(end_j);
+        }
+      }
+      else
+      {
+        seg.start_joints = jointsToVec(start_j);
+        seg.end_joints = jointsToVec(end_j);
+      }
+      bool any_vel = false;
+      bool any_acc = false;
+      for (const auto& pt : jt.points)
+      {
+        auto rec = recordFromPoint(pt);
+        any_vel = any_vel || !rec.velocities.empty();
+        any_acc = any_acc || !rec.accelerations.empty();
+        seg.points.push_back(std::move(rec));
+      }
+      seg.velocities_present = any_vel;
+      seg.accelerations_present = any_acc;
+      appendMultiDof(md, seg);
+      traj.segments.push_back(std::move(seg));
+    }
+  }
+  if (traj.segments.empty())
+  {
+    error = "planned solution contained no JointTrajectory";
+    return false;
+  }
+  std::set<std::string> names;
+  for (const auto& name : kArmJoints)
+  {
+    names.insert(name);
+  }
+  for (const auto& seg : traj.segments)
+  {
+    names.insert(seg.joint_names.begin(), seg.joint_names.end());
+  }
+  traj.joint_names.assign(kArmJoints.begin(), kArmJoints.end());
+  for (const auto& name : names)
+  {
+    if (std::find(traj.joint_names.begin(), traj.joint_names.end(), name) == traj.joint_names.end())
+    {
+      traj.joint_names.push_back(name);
+    }
+  }
+  attachStandardEvents(traj);
+  fillDerivedTotals(traj);
+  return true;
+}
+
+moveit_msgs::msg::DisplayTrajectory displayFromPersisted(const PersistedTrajectory& traj,
+                                                         const std::string& model_id)
+{
+  moveit_msgs::msg::DisplayTrajectory disp;
+  disp.model_id = model_id;
+  if (!traj.segments.empty())
+  {
+    disp.trajectory_start.joint_state.name.assign(kArmJoints.begin(), kArmJoints.end());
+    disp.trajectory_start.joint_state.position = traj.segments.front().start_joints;
+  }
+  for (const auto& seg : traj.segments)
+  {
+    if (seg.points.empty())
+    {
+      continue;
+    }
+    moveit_msgs::msg::RobotTrajectory rt;
+    rt.joint_trajectory.header.frame_id = kPlanningFrame;
+    rt.joint_trajectory.joint_names = seg.joint_names;
+    for (const auto& pt : seg.points)
+    {
+      trajectory_msgs::msg::JointTrajectoryPoint msg;
+      msg.positions = pt.positions;
+      msg.velocities = pt.velocities;
+      msg.accelerations = pt.accelerations;
+      msg.time_from_start.sec = pt.sec;
+      msg.time_from_start.nanosec = pt.nanosec;
+      rt.joint_trajectory.points.push_back(msg);
+    }
+    disp.trajectory.push_back(rt);
+  }
+  return disp;
+}
+
+size_t countDisplayPoints(const moveit_msgs::msg::DisplayTrajectory& disp)
+{
+  size_t n = 0;
+  for (const auto& tr : disp.trajectory)
+  {
+    n += tr.joint_trajectory.points.size();
+  }
+  return n;
+}
+
+size_t countPersistedPoints(const PersistedTrajectory& traj)
+{
+  size_t n = 0;
+  for (const auto& seg : traj.segments)
+  {
+    n += seg.points.size();
+  }
+  return n;
+}
+
+void writePersistDiagnostics(const std::string& path, const std::string& status,
+                             const std::string& cls, const std::string& winner_path,
+                             const WinnerEndpoints* winner, const PersistedTrajectory* traj,
+                             const PersistValidation* roundtrip, const PersistValidation* continuity,
+                             const PersistValidation* endpoints, int attempts, int success_attempt,
+                             bool plan_ok, const std::string& rviz_source, bool playback_ok)
+{
+  std::ofstream yaml(path);
+  yaml.setf(std::ios::fixed);
+  yaml.precision(17);
+  yaml << "status: " << status << "\n";
+  yaml << "failure_classification: " << cls << "\n";
+  yaml << "task_version: STEP12C\n";
+  yaml << "source_winner_path: " << winner_path << "\n";
+  yaml << "duplicate_move_grasp: NOT_FOUND\n";
+  yaml << "duplicate_move_grasp_fixed: N/A\n";
+  yaml << "endpoint_search_performed: false\n";
+  yaml << "roll_search_performed: false\n";
+  yaml << "ik_search_performed: false\n";
+  yaml << "beam_search_performed: false\n";
+  yaml << "full_task_plan_attempts: " << attempts << "\n";
+  yaml << "full_task_plan_success: " << (plan_ok ? "true" : "false") << "\n";
+  yaml << "successful_attempt: " << success_attempt << "\n";
+  yaml << "execution_performed: false\n";
+  yaml << "rviz_playback_source: " << rviz_source << "\n";
+  yaml << "rviz_playback: " << (playback_ok ? "PASS" : "FAIL") << "\n";
+  if (winner)
+  {
+    yaml << "source_winner:\n";
+    yaml << "  a_roll_deg: " << winner->a_roll_deg << "\n";
+    yaml << "  b_roll_deg: " << winner->b_roll_deg << "\n";
+    yaml << "  c_roll_deg: " << winner->c_roll_deg << "\n";
+  }
+  if (traj)
+  {
+    yaml << "motion_subtrajectory_count: " << traj->segments.size() << "\n";
+    int deployable = 0;
+    bool current_home = false;
+    bool multi = false;
+    for (const auto& seg : traj->segments)
+    {
+      deployable += seg.deployable ? 1 : 0;
+      current_home = current_home || seg.logical_segment == kLogicalCurrentToHome;
+      multi = multi || seg.multi_dof_present;
+      yaml << "segment_" << seg.name << "_points: " << seg.points.size() << "\n";
+      yaml << "segment_" << seg.name << "_duration: " << seg.duration << "\n";
+    }
+    yaml << "fixed_deployable_segment_count: " << deployable << "\n";
+    yaml << "current_to_home_saved: " << (current_home ? "true" : "false") << "\n";
+    yaml << "current_to_home_deployable: false\n";
+    yaml << "runtime_replan_required: true\n";
+    yaml << "multi_dof_present: " << (multi ? "true" : "false") << "\n";
+    yaml << "persisted_full_plan_total_time: " << traj->persisted_full_plan_total_time << "\n";
+    yaml << "persisted_fixed_task_total_duration: " << traj->persisted_fixed_task_total_duration
+         << "\n";
+    yaml << "persisted_total_joint_path_length: " << traj->persisted_total_joint_path_length << "\n";
+    yaml << "search_score_total_time: " << traj->search_score_total_time << "\n";
+    yaml << "search_score_joint_path_length: " << traj->search_score_joint_path_length << "\n";
+    yaml << "time_difference: "
+         << (traj->persisted_full_plan_total_time - traj->search_score_total_time) << "\n";
+    yaml << "path_difference: "
+         << (traj->persisted_total_joint_path_length - traj->search_score_joint_path_length) << "\n";
+  }
+  if (roundtrip)
+  {
+    yaml << "round_trip_ok: " << (roundtrip->ok ? "true" : "false") << "\n";
+    yaml << "round_trip_reason: " << roundtrip->reason << "\n";
+    yaml << "round_trip_position_max_error: " << roundtrip->position_max_error << "\n";
+    yaml << "round_trip_velocity_max_error: " << roundtrip->velocity_max_error << "\n";
+    yaml << "round_trip_acceleration_max_error: " << roundtrip->acceleration_max_error << "\n";
+    yaml << "round_trip_time_identical: " << (roundtrip->time_identical ? "true" : "false") << "\n";
+  }
+  if (continuity)
+  {
+    yaml << "continuity_ok: " << (continuity->ok ? "true" : "false") << "\n";
+    yaml << "max_discontinuity: " << continuity->max_discontinuity << "\n";
+    for (const auto& item : continuity->discontinuities)
+    {
+      std::string key = item.first;
+      for (char& c : key)
+      {
+        if (c == ' ' || c == '/')
+        {
+          c = '_';
+        }
+      }
+      yaml << "continuity_" << key << ": " << item.second << "\n";
+    }
+  }
+  if (endpoints)
+  {
+    yaml << "home_start_error: " << endpoints->home_start_error << "\n";
+    yaml << "a_max_joint_error: " << endpoints->a_max_error << "\n";
+    yaml << "b_max_joint_error: " << endpoints->b_max_error << "\n";
+    yaml << "c_max_joint_error: " << endpoints->c_max_error << "\n";
+    yaml << "endpoint_ok: " << (endpoints->ok ? "true" : "false") << "\n";
+  }
+}
+
+int runWinnerReplayPersist(
+    const rclcpp::Node::SharedPtr& node, const std::string& group, const std::string& ee_link,
+    const std::string& attach_link, const std::string& object_id, const std::string& table_name,
+    const std::vector<std::string>& touch_links, const geometry_msgs::msg::PoseStamped& object_scene,
+    const geometry_msgs::msg::PoseStamped& pregrasp, const geometry_msgs::msg::PoseStamped& grasp,
+    const geometry_msgs::msg::PoseStamped& lift, double object_height, double object_radius,
+    double planning_time, const std::map<std::string, double>& home,
+    const moveit::core::RobotModelConstPtr& robot_model, SearchViz& viz, const std::string& diag_path)
+{
+  RCLCPP_INFO(node->get_logger(), "========== STEP 12D WINNER TRAJECTORY PERSIST ==========");
+  RCLCPP_INFO(node->get_logger(), "WINNER REPLAY / PERSIST ONLY");
+  RCLCPP_INFO(node->get_logger(), "endpoint search performed: NO");
+  RCLCPP_INFO(node->get_logger(), "roll search performed: NO");
+  RCLCPP_INFO(node->get_logger(), "IK search performed: NO");
+  RCLCPP_INFO(node->get_logger(), "beam search performed: NO");
+  RCLCPP_INFO(node->get_logger(), "DUPLICATE_MOVE_GRASP: NOT FOUND");
+  RCLCPP_INFO(node->get_logger(), "FIXED: N/A");
+  RCLCPP_INFO(node->get_logger(), "PLAN / SERIALIZE / READ-BACK / RVIZ DISPLAY ONLY");
+
+  const std::string winner_path = getString(
+      node, "winner_input_path",
+      "/home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_winner.yaml");
+  const std::string traj_path = getString(
+      node, "trajectory_output_path",
+      "/home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/"
+      "step12c_tilted_camera_winner_trajectory.yaml");
+  const int retries = getInt(node, "full_plan_retries", 5);
+  const bool visualize_saved = getBool(node, "visualize_saved_trajectory", true);
+  if (visualize_saved && !viz.traj)
+  {
+    auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
+    viz.traj = node->create_publisher<moveit_msgs::msg::DisplayTrajectory>(kTrajTopic, qos);
+  }
+
+  WinnerEndpoints winner;
+  std::string error;
+  if (!loadWinnerYaml(winner_path, winner, error))
+  {
+    RCLCPP_ERROR(node->get_logger(), "Failed to load winner YAML %s: %s", winner_path.c_str(),
+                 error.c_str());
+    writePersistDiagnostics(diag_path, "FAIL", "WINNER_YAML_UNREADABLE", winner_path, nullptr,
+                            nullptr, nullptr, nullptr, nullptr, 0, 0, false, "NONE", false);
+    return 3;
+  }
+  if (!winnerMatchesFrozenStep12c(winner, error))
+  {
+    RCLCPP_ERROR(node->get_logger(), "Winner endpoints changed: %s", error.c_str());
+    writePersistDiagnostics(diag_path, "FAIL", "WINNER_ENDPOINT_MISMATCH", winner_path, &winner,
+                            nullptr, nullptr, nullptr, nullptr, 0, 0, false, "NONE", false);
+    return 3;
+  }
+  if (maxJointError(home, winner.home_rad) > 1e-8)
+  {
+    RCLCPP_ERROR(node->get_logger(), "Launch Home does not match winner Home (max|dq|=%.12f)",
+                 maxJointError(home, winner.home_rad));
+    writePersistDiagnostics(diag_path, "FAIL", "HOME_MISMATCH", winner_path, &winner, nullptr,
+                            nullptr, nullptr, nullptr, 0, 0, false, "NONE", false);
+    return 3;
+  }
+  RCLCPP_INFO(node->get_logger(),
+              "SOURCE WINNER A r=%.1f B r=%.1f C r=%.1f (endpoints locked, no search)",
+              winner.a_roll_deg, winner.b_roll_deg, winner.c_roll_deg);
+
+  PersistedTrajectory planned;
+  int success_attempt = 0;
+  int attempts = 0;
+  bool plan_ok = false;
+  for (int attempt = 1; attempt <= retries && rclcpp::ok(); ++attempt)
+  {
+    ++attempts;
+    moveit::task_constructor::Task task("", true);
+    task.setName("FR3 Step12D Persist Winner");
+    task.loadRobotModel(node);
+    addPrefixStages(task, node, group, ee_link, attach_link, object_id, table_name, touch_links,
+                    object_scene, pregrasp, grasp, lift, object_height, object_radius, planning_time,
+                    home);
+    auto ompl =
+        std::make_shared<moveit::task_constructor::solvers::PipelinePlanner>(node, kOmplPipeline);
+    ompl->setTimeout(planning_time);
+    auto move_a = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo ViewA", ompl);
+    move_a->setGroup(group);
+    move_a->setGoal(winner.a_rad);
+    move_a->setTimeout(planning_time);
+    task.add(std::move(move_a));
+    auto move_b = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo ViewB", ompl);
+    move_b->setGroup(group);
+    move_b->setGoal(winner.b_rad);
+    move_b->setTimeout(planning_time);
+    task.add(std::move(move_b));
+    auto move_c = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo ViewC", ompl);
+    move_c->setGroup(group);
+    move_c->setGoal(winner.c_rad);
+    move_c->setTimeout(planning_time);
+    task.add(std::move(move_c));
+    try
+    {
+      task.init();
+    }
+    catch (const std::exception& ex)
+    {
+      RCLCPP_WARN(node->get_logger(), "persist task init failed attempt %d: %s", attempt, ex.what());
+      continue;
+    }
+    if (!task.plan(1) || task.numSolutions() < 1)
+    {
+      RCLCPP_WARN(node->get_logger(), "persist full-task plan failed attempt %d/%d", attempt,
+                  retries);
+      continue;
+    }
+    planned = PersistedTrajectory{};
+    planned.source_winner_file = fileBaseName(winner_path);
+    planned.source_winner_path = winner_path;
+    planned.search_score_total_time = winner.search_score_total_time;
+    planned.search_score_joint_path_length = winner.search_score_joint_path_length;
+    planned.winner = winner;
+    if (!extractPersistedSegments(*task.solutions().front(), planned, error))
+    {
+      RCLCPP_ERROR(node->get_logger(), "persist extract failed: %s", error.c_str());
+      writePersistDiagnostics(diag_path, "FAIL", "TRAJECTORY_EXTRACT_FAILED", winner_path, &winner,
+                              nullptr, nullptr, nullptr, nullptr, attempts, attempt, true, "NONE",
+                              false);
+      return 5;
+    }
+    plan_ok = true;
+    success_attempt = attempt;
+    RCLCPP_INFO(node->get_logger(),
+                "FIXED-WINNER FULL PLAN SUCCESS attempt=%d/%d subtrajectories=%zu", attempt,
+                retries, planned.segments.size());
+    break;
+  }
+  if (!plan_ok)
+  {
+    RCLCPP_ERROR(node->get_logger(), "FIXED_WINNER_REPLAY_PLANNING_FAILED after %d attempts",
+                 attempts);
+    writePersistDiagnostics(diag_path, "FAIL", "FIXED_WINNER_REPLAY_PLANNING_FAILED", winner_path,
+                            &winner, nullptr, nullptr, nullptr, nullptr, attempts, 0, false, "NONE",
+                            false);
+    return 4;
+  }
+
+  if (!writeTrajectoryYaml(traj_path, planned, error))
+  {
+    RCLCPP_ERROR(node->get_logger(), "serialize failed: %s", error.c_str());
+    writePersistDiagnostics(diag_path, "FAIL", "TRAJECTORY_SERIALIZE_FAILED", winner_path, &winner,
+                            &planned, nullptr, nullptr, nullptr, attempts, success_attempt, true,
+                            "NONE", false);
+    return 5;
+  }
+  RCLCPP_INFO(node->get_logger(), "Serialized exact planned JointTrajectory to %s",
+              traj_path.c_str());
+
+  PersistedTrajectory loaded;
+  if (!readTrajectoryYaml(traj_path, loaded, error))
+  {
+    RCLCPP_ERROR(node->get_logger(), "read-back failed: %s", error.c_str());
+    writePersistDiagnostics(diag_path, "FAIL", "TRAJECTORY_READBACK_FAILED", winner_path, &winner,
+                            &planned, nullptr, nullptr, nullptr, attempts, success_attempt, true,
+                            "NONE", false);
+    return 5;
+  }
+  const auto roundtrip = validateRoundTrip(planned, loaded);
+  const auto continuity = validateContinuity(loaded);
+  const auto endpoints = validateEndpoints(loaded, winner);
+  bool times_ok = true;
+  for (const auto& seg : loaded.segments)
+  {
+    if (!seg.points.empty() && !timesMonotonic(seg))
+    {
+      times_ok = false;
+      RCLCPP_ERROR(node->get_logger(), "time_from_start not monotonic or duration<=0: %s",
+                   seg.name.c_str());
+    }
+  }
+  RCLCPP_INFO(node->get_logger(),
+              "ROUND-TRIP %s pos_err=%.3e vel_err=%.3e acc_err=%.3e time_identical=%s",
+              roundtrip.ok ? "PASS" : "FAIL", roundtrip.position_max_error,
+              roundtrip.velocity_max_error, roundtrip.acceleration_max_error,
+              roundtrip.time_identical ? "YES" : "NO");
+  RCLCPP_INFO(node->get_logger(), "CONTINUITY %s max_disc=%.6e", continuity.ok ? "PASS" : "FAIL",
+              continuity.max_discontinuity);
+  RCLCPP_INFO(node->get_logger(), "ENDPOINT Home=%.6e A=%.6e B=%.6e C=%.6e %s",
+              endpoints.home_start_error, endpoints.a_max_error, endpoints.b_max_error,
+              endpoints.c_max_error, endpoints.ok ? "PASS" : "FAIL");
+  RCLCPP_INFO(node->get_logger(),
+              "TIMING search_score=%.9f persisted_full=%.9f persisted_fixed=%.9f diff=%.9f",
+              loaded.search_score_total_time, loaded.persisted_full_plan_total_time,
+              loaded.persisted_fixed_task_total_duration,
+              loaded.persisted_full_plan_total_time - loaded.search_score_total_time);
+  RCLCPP_INFO(node->get_logger(), "PATH search_score=%.9f persisted=%.9f diff=%.9f",
+              loaded.search_score_joint_path_length, loaded.persisted_total_joint_path_length,
+              loaded.persisted_total_joint_path_length - loaded.search_score_joint_path_length);
+
+  const bool persist_ok = roundtrip.ok && continuity.ok && endpoints.ok && times_ok;
+  bool playback_ok = false;
+  std::string rviz_source = "NONE";
+  if (persist_ok && visualize_saved && viz.traj)
+  {
+    const auto disp = displayFromPersisted(loaded, robot_model->getName());
+    const size_t saved_pts = countPersistedPoints(loaded);
+    const size_t played_pts = countDisplayPoints(disp);
+    viz.traj->publish(disp);
+    playback_ok = saved_pts == played_pts && saved_pts > 0;
+    rviz_source = "SAVED TRAJECTORY";
+    RCLCPP_INFO(node->get_logger(), "RVIZ PLAYBACK SOURCE:");
+    RCLCPP_INFO(node->get_logger(), "SAVED STEP12C WINNER TRAJECTORY");
+    RCLCPP_INFO(node->get_logger(), "NOT:");
+    RCLCPP_INFO(node->get_logger(), "NEWLY REPLANNED TRAJECTORY");
+    RCLCPP_INFO(node->get_logger(), "saved-vs-played points: saved=%zu played=%zu %s", saved_pts,
+                played_pts, playback_ok ? "PASS" : "FAIL");
+  }
+  else if (!visualize_saved)
+  {
+    rviz_source = "DISABLED";
+  }
+
+  if (persist_ok && playback_ok)
+  {
+    RCLCPP_INFO(node->get_logger(), "FROZEN TRAJECTORY CREATED");
+    writePersistDiagnostics(diag_path, "PASS", "none", winner_path, &winner, &loaded, &roundtrip,
+                            &continuity, &endpoints, attempts, success_attempt, true, rviz_source,
+                            playback_ok);
+    return 0;
+  }
+  if (persist_ok && !visualize_saved)
+  {
+    RCLCPP_INFO(node->get_logger(), "FROZEN TRAJECTORY CREATED");
+    writePersistDiagnostics(diag_path, "PASS", "none", winner_path, &winner, &loaded, &roundtrip,
+                            &continuity, &endpoints, attempts, success_attempt, true, rviz_source,
+                            true);
+    return 0;
+  }
+  const char* cls = !roundtrip.ok ? "ROUND_TRIP_FAILED" :
+                    !times_ok     ? "TIME_MONOTONIC_FAILED" :
+                    !continuity.ok ? "CONTINUITY_FAILED" :
+                    !endpoints.ok  ? "ENDPOINT_MATCH_FAILED" :
+                                     "RVIZ_SAVED_PLAYBACK_FAILED";
+  writePersistDiagnostics(diag_path, "FAIL", cls, winner_path, &winner, &loaded, &roundtrip,
+                          &continuity, &endpoints, attempts, success_attempt, true, rviz_source,
+                          playback_ok);
+  return 5;
+}
 }  // namespace
 
 int main(int argc, char** argv)
@@ -1445,6 +2022,27 @@ int main(int argc, char** argv)
   if (robot_model->getModelFrame() != object_world.header.frame_id)
   {
     object_scene = object_base;
+  }
+  const bool winner_replay_only =
+      getBool(node, "winner_replay_only", false) || getBool(node, "persist_winner_only", false);
+  if (winner_replay_only)
+  {
+    const int rc = runWinnerReplayPersist(
+        node, group, ee_link, attach_link, object_id, table_name, touch_links, object_scene,
+        pregrasp, grasp, lift, object_height, object_radius, planning_time, home, robot_model, viz,
+        diag_path);
+    if (vis_hold > 0)
+    {
+      std::this_thread::sleep_for(std::chrono::duration<double>(vis_hold));
+    }
+    const auto after = waitForFreshJoints(node, std::chrono::seconds(3));
+    if (after)
+    {
+      RCLCPP_INFO(node->get_logger(), "Robot moved because of this node? %s",
+                  maxJointError(jointsFromMsg(*after), actual) > 0.02 ? "YES" : "NO");
+    }
+    shutdownSpinner(executor, spinner);
+    return rc;
   }
   bool prefix_ok = false;
   double prefix_time = 0.0;

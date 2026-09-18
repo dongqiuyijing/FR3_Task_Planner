@@ -21,6 +21,7 @@ find_package(moveit_task_constructor_msgs REQUIRED)
 find_package(visualization_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometric_shapes REQUIRED)
+find_package(yaml-cpp REQUIRED)
 
 add_executable(fr3_mtc_smoke_test src/mtc_fr3_smoke_test.cpp)
 ament_target_dependencies(fr3_mtc_smoke_test
@@ -239,11 +240,17 @@ ament_target_dependencies(fr3_mtc_mount_layout_search
   moveit_task_constructor_msgs
 )
 
-add_executable(fr3_mtc_complete_abc_search src/mtc_fr3_complete_abc_search.cpp)
+add_executable(fr3_mtc_complete_abc_search
+  src/mtc_fr3_complete_abc_search.cpp
+  src/winner_trajectory_io.cpp
+)
 target_include_directories(fr3_mtc_complete_abc_search PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(fr3_mtc_complete_abc_search fr_task_planner_endpoints)
+target_link_libraries(fr3_mtc_complete_abc_search
+  fr_task_planner_endpoints
+  yaml-cpp
+)
 ament_target_dependencies(fr3_mtc_complete_abc_search
   rclcpp
   geometry_msgs

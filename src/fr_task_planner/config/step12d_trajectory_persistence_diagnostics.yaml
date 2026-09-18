@@ -1,0 +1,65 @@
+status: PASS
+failure_classification: none
+task_version: STEP12C
+source_winner_path: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_winner.yaml
+duplicate_move_grasp: NOT_FOUND
+duplicate_move_grasp_fixed: N/A
+endpoint_search_performed: false
+roll_search_performed: false
+ik_search_performed: false
+beam_search_performed: false
+full_task_plan_attempts: 1
+full_task_plan_success: true
+successful_attempt: 1
+execution_performed: false
+rviz_playback_source: SAVED TRAJECTORY
+rviz_playback: PASS
+source_winner:
+  a_roll_deg: -90.00000000000000000
+  b_roll_deg: -130.00000000000000000
+  c_roll_deg: -85.00000000000000000
+motion_subtrajectory_count: 7
+segment_Current_to_Home_points: 3
+segment_Current_to_Home_duration: 0.10591296200000001
+segment_Home_to_PreGrasp_points: 61
+segment_Home_to_PreGrasp_duration: 5.90254255299999997
+segment_PreGrasp_to_Grasp_points: 5
+segment_PreGrasp_to_Grasp_duration: 0.37717288800000004
+segment_Grasp_to_Lift_points: 5
+segment_Grasp_to_Lift_duration: 0.37712331400000004
+segment_Lift_to_A_points: 25
+segment_Lift_to_A_duration: 2.33276131899999983
+segment_A_to_B_points: 33
+segment_A_to_B_duration: 3.19240797700000023
+segment_B_to_C_original_bottom_points: 30
+segment_B_to_C_original_bottom_duration: 2.86490045900000023
+fixed_deployable_segment_count: 6
+current_to_home_saved: true
+current_to_home_deployable: false
+runtime_replan_required: true
+multi_dof_present: false
+persisted_full_plan_total_time: 15.15282147199999940
+persisted_fixed_task_total_duration: 15.04690851000000151
+persisted_total_joint_path_length: 15.49194985736322749
+search_score_total_time: 13.84758091499999999
+search_score_joint_path_length: 14.50590165999999925
+time_difference: 1.30524055699999941
+path_difference: 0.98604819736322824
+round_trip_ok: true
+round_trip_reason: ok
+round_trip_position_max_error: 0.00000000000000000
+round_trip_velocity_max_error: 0.00000000000000000
+round_trip_acceleration_max_error: 0.00000000000000000
+round_trip_time_identical: true
+continuity_ok: true
+max_discontinuity: 0.00000000000000000
+continuity_A_to_B___B_to_C_original_bottom: 0.00000000000000000
+continuity_Grasp_to_Lift___Lift_to_A: 0.00000000000000000
+continuity_Home_to_PreGrasp___PreGrasp_to_Grasp: 0.00000000000000000
+continuity_Lift_to_A___A_to_B: 0.00000000000000000
+continuity_PreGrasp_to_Grasp___Grasp_to_Lift: 0.00000000000000000
+home_start_error: 0.00009678056905482
+a_max_joint_error: 0.00008053754218852
+b_max_joint_error: 0.00009456173018552
+c_max_joint_error: 0.00008750815656966
+endpoint_ok: true

@@ -163,6 +163,18 @@ def _launch_nodes(context, *args, **kwargs):
         context
     )
     params["winner_output_path"] = LaunchConfiguration("winner_output_path").perform(context)
+    params["winner_input_path"] = LaunchConfiguration("winner_input_path").perform(context)
+    params["trajectory_output_path"] = LaunchConfiguration("trajectory_output_path").perform(
+        context
+    )
+    params["winner_replay_only"] = (
+        LaunchConfiguration("winner_replay_only").perform(context).lower() == "true"
+    )
+    params["persist_winner_only"] = params["winner_replay_only"]
+    params["visualize_saved_trajectory"] = (
+        LaunchConfiguration("visualize_saved_trajectory").perform(context).lower() == "true"
+    )
+    params["full_plan_retries"] = int(LaunchConfiguration("full_plan_retries").perform(context))
     params["camera_design_x"] = STEP12C_CAMERA_POSITION[0]
     params["camera_design_y"] = STEP12C_CAMERA_POSITION[1]
     params["camera_design_z"] = STEP12C_CAMERA_POSITION[2]
@@ -213,6 +225,7 @@ def _launch_nodes(context, *args, **kwargs):
     delay = float(LaunchConfiguration("search_delay").perform(context))
     start_stage4 = LaunchConfiguration("start_stage4").perform(context).lower() == "true"
     visualize = LaunchConfiguration("visualize_search").perform(context).lower() == "true"
+    persist_only = LaunchConfiguration("winner_replay_only").perform(context).lower() == "true"
     if start_stage4 and delay < 1.0:
         delay = 18.0
     pkg_share = get_package_share_directory("fr_task_planner")
@@ -249,9 +262,18 @@ def _launch_nodes(context, *args, **kwargs):
         LogInfo(
             msg="\n".join(
                 [
-                    "========== STEP 12C TILTED-CAMERA FIXED-ABC SEARCH ==========",
+                    (
+                        "========== STEP 12D WINNER TRAJECTORY PERSIST =========="
+                        if persist_only
+                        else "========== STEP 12C TILTED-CAMERA FIXED-ABC SEARCH =========="
+                    ),
                     f"ROS_DOMAIN_ID={_ROS_DOMAIN_ID}",
-                    "PLAN / RViz ONLY. No Gazebo execute. No real robot.",
+                    (
+                        "PERSIST ONLY. Load fixed STEP12C winner. No endpoint/roll/IK/beam search."
+                        if persist_only
+                        else "PLAN / RViz ONLY. No Gazebo execute. No real robot."
+                    ),
+                    "execution:=false  (no execute=true path)",
                     f"HOME_DEG: {list(home_deg)}",
                     f"HOME_RAD: {list(home_rad)}",
                     "requested HOME_DEG: " + str(list(STEP12C_HOME_DEG)),
@@ -297,6 +319,10 @@ def generate_launch_description():
     default_diag = os.path.expanduser(
         "~/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_diagnostics.yaml"
     )
+    default_winner_input = default_winner
+    default_traj = os.path.expanduser(
+        "~/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_winner_trajectory.yaml"
+    )
     return LaunchDescription(
         [
             SetEnvironmentVariable(name="ROS_DOMAIN_ID", value=_ROS_DOMAIN_ID),
@@ -322,6 +348,11 @@ def generate_launch_description():
                 default_value=default_diag,
             ),
             DeclareLaunchArgument("winner_output_path", default_value=default_winner),
+            DeclareLaunchArgument("winner_input_path", default_value=default_winner_input),
+            DeclareLaunchArgument("trajectory_output_path", default_value=default_traj),
+            DeclareLaunchArgument("winner_replay_only", default_value="false"),
+            DeclareLaunchArgument("visualize_saved_trajectory", default_value="true"),
+            DeclareLaunchArgument("full_plan_retries", default_value="5"),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(control_share, "launch", "stage4_full.launch.py")
