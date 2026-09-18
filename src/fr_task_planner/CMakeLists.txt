@@ -215,6 +215,25 @@ ament_target_dependencies(fr3_mtc_dense_top_circle_search
   moveit_task_constructor_msgs
 )
 
+add_executable(fr3_mtc_mount_layout_search src/mtc_fr3_mount_layout_search.cpp)
+target_include_directories(fr3_mtc_mount_layout_search PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(fr3_mtc_mount_layout_search fr_task_planner_endpoints)
+ament_target_dependencies(fr3_mtc_mount_layout_search
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  std_msgs
+  visualization_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  moveit_task_constructor_core
+  moveit_task_constructor_msgs
+)
+
 install(TARGETS
   fr3_mtc_smoke_test
   fr3_mtc_pregrasp_test
@@ -229,6 +248,7 @@ install(TARGETS
   fr3_mtc_collision_diag
   fr3_mtc_sim_visualizer
   fr3_mtc_dense_top_circle_search
+  fr3_mtc_mount_layout_search
   DESTINATION lib/${PROJECT_NAME}
 )
 

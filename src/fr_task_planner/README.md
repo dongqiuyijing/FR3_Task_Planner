@@ -644,3 +644,36 @@ ros2 launch fr_task_planner mtc_fr3_dense_top_circle_search.launch.py
 ```
 
 Dump: `/tmp/fr3_step11e_dense_top_circle.yaml`
+
+# STEP 11F — Inspection Height Feasibility (P1.world.z only)
+
+Diagnostic only. Does **not** modify `stage4_config.yaml`.
+Robot base, column, table, P1.x/y, D1, and up stay at baseline.
+The only searched variable is `P1.world.z`.
+
+Broad robot-base translation/rotation search was abandoned: the physical
+FR3/column mounting cannot change.
+
+```bash
+cd ~/fr_task_ws
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+export ROS_DOMAIN_ID=77
+ros2 launch fr_task_planner mtc_fr3_mount_layout_search.launch.py
+```
+
+Dump: `/tmp/fr3_step11f_p1z.yaml`
+Best candidate (if any): `/tmp/fr3_step11f_best_p1z.yaml`
+
+Live RViz (default on). Observational only; does not change IK/collision ranking.
+
+```bash
+ros2 launch fr_task_planner mtc_fr3_mount_layout_search.launch.py visualize_search:=true
+```
+
+Fast compute without RViz:
+
+```bash
+ros2 launch fr_task_planner mtc_fr3_mount_layout_search.launch.py visualize_search:=false headless:=true
+```
