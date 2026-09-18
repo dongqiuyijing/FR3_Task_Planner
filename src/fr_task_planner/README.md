@@ -610,3 +610,21 @@ RViz MarkerArray: `/fr3_vis/markers`
 Collision ghost: `/fr3_vis/collision_robot_state`
 MTC animation: `/solution`
 Dump: `/tmp/fr3_step11c_visualization.yaml`
+
+# STEP 11D — Full Workcell Visualization
+
+Same planner as STEP 11C. Adds workcell labels, PlanningScene table/column
+visibility, and RViz `robot_description` from `fairino3_gazebo.urdf.xacro`
+so Fixed Frame `world` matches Gazebo `world→base_link`.
+
+```bash
+cd ~/fr_task_ws
+source /opt/ros/humble/setup.bash
+source ~/fairino_ws/install/setup.bash
+source ~/fr_task_ws/install/setup.bash
+export ROS_DOMAIN_ID=77
+ros2 launch fr_task_planner mtc_fr3_workcell_demo.launch.py
+```
+
+Does not execute trajectories. Does not start real hardware.
+Dump: `/tmp/fr3_step11d_workcell.yaml`

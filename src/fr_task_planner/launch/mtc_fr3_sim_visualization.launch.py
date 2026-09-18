@@ -2,7 +2,7 @@ import os
 import sys
 
 import yaml
-from ament_index_python.packages import get_package_share_directory
+from ament_index_python.packages import get_package_prefix, get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -14,8 +14,9 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from moveit_configs_utils import MoveItConfigsBuilder
 
 _LAUNCH_DIR = os.path.dirname(__file__)
@@ -132,6 +133,48 @@ def _env_bounds(config_file: str) -> dict:
     }
 
 
+def _gazebo_robot_description(config_file: str) -> ParameterValue:
+    """Same world→base URDF as stage4 Gazebo / move_group. Do not use identity TF."""
+    from fr_control.constants import ARM_JOINTS
+    from fr_control.stage4_config import (
+        joint_positions_rad,
+        load_yaml,
+        robot_base_rpy,
+        robot_base_xyz,
+    )
+
+    cfg = load_yaml(config_file)
+    pos = robot_base_xyz(cfg)
+    rpy = robot_base_rpy(cfg)
+    home = joint_positions_rad(cfg)
+    robot_xacro = os.path.join(
+        get_package_share_directory("fairino3_gazebo"),
+        "urdf",
+        "fairino3_gazebo.urdf.xacro",
+    )
+    plugin = os.path.join(
+        get_package_prefix("gz_ros2_control"),
+        "lib",
+        "libgz_ros2_control-system.so",
+    )
+    cmd = [
+        "xacro ",
+        robot_xacro,
+        " gz_ros2_control_plugin:=",
+        plugin,
+        " enable_grasp_weld:=false",
+        f" world_to_base_x:={pos[0]:.8g}",
+        f" world_to_base_y:={pos[1]:.8g}",
+        f" world_to_base_z:={pos[2]:.8g}",
+        f" world_to_base_roll:={rpy[0]:.8g}",
+        f" world_to_base_pitch:={rpy[1]:.8g}",
+        f" world_to_base_yaw:={rpy[2]:.8g}",
+    ]
+    for name, value in zip(ARM_JOINTS, home):
+        cmd.append(f" initial_{name}:={value:.8g}")
+    return ParameterValue(Command(cmd), value_type=str)
+
+
 def _launch_nodes(context, *args, **kwargs):
     config_file = LaunchConfiguration("config_file").perform(context)
     source_view = LaunchConfiguration("source_view").perform(context)
@@ -221,18 +264,23 @@ def _launch_nodes(context, *args, **kwargs):
         .to_moveit_configs()
     )
     pkg_share = get_package_share_directory("fr_task_planner")
-    rviz_config = os.path.join(pkg_share, "config", "mtc_sim_visualization.rviz")
+    rviz_config = LaunchConfiguration("rviz_config").perform(context)
+    if not rviz_config:
+        rviz_config = os.path.join(pkg_share, "config", "mtc_sim_visualization.rviz")
     use_sim_time = LaunchConfiguration("use_sim_time")
     delay = float(LaunchConfiguration("visualizer_delay").perform(context))
     start_stage4 = LaunchConfiguration("start_stage4").perform(context).lower() == "true"
     if start_stage4 and delay < 1.0:
         delay = 18.0
 
+    robot_description_gz = _gazebo_robot_description(config_file)
+
     preflight = "\n".join(
         [
-            "========== STEP 11C PREFLIGHT ==========",
+            "========== STEP 11D PREFLIGHT ==========",
             f"ROS_DOMAIN_ID={_ROS_DOMAIN_ID} (isolated from real FR3)",
             f"sequence: Home → PreGrasp → Grasp → Lift → {source_view} → {target_view}",
+            "RViz robot_description: fairino3_gazebo.urdf.xacro (world→base from YAML)",
             "top_circle: DIAGNOSTIC ONLY, never executed",
             "Planner: MTC + OMPL + Pilz LIN (not a handcrafted joint path)",
             "Gazebo execution: NOT IMPLEMENTED; RViz visualize_only",
@@ -246,7 +294,7 @@ def _launch_nodes(context, *args, **kwargs):
         name="fr3_mtc_sim_visualizer",
         output="screen",
         parameters=[
-            moveit_config.robot_description,
+            {"robot_description": robot_description_gz},
             moveit_config.robot_description_semantic,
             moveit_config.robot_description_kinematics,
             moveit_config.joint_limits,
@@ -263,7 +311,7 @@ def _launch_nodes(context, *args, **kwargs):
         output="log",
         arguments=["-d", rviz_config],
         parameters=[
-            moveit_config.robot_description,
+            {"robot_description": robot_description_gz},
             moveit_config.robot_description_semantic,
             moveit_config.robot_description_kinematics,
             moveit_config.planning_pipelines,
@@ -316,6 +364,14 @@ def generate_launch_description():
             DeclareLaunchArgument("roll_step_deg", default_value="30.0"),
             DeclareLaunchArgument("max_ik_solutions_per_pose", default_value="8"),
             DeclareLaunchArgument("min_ik_solution_distance", default_value="0.1"),
+            DeclareLaunchArgument(
+                "rviz_config",
+                default_value=os.path.join(
+                    get_package_share_directory("fr_task_planner"),
+                    "config",
+                    "mtc_sim_visualization.rviz",
+                ),
+            ),
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(
                     os.path.join(control_share, "launch", "stage4_full.launch.py")

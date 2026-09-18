@@ -1,0 +1,106 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+  - Class: moveit_task_constructor/Motion Planning Tasks
+    Global Settings:
+      Task View Settings:
+        Show Computation Times: true
+        Task Expansion: All Expanded
+    Name: Motion Planning Tasks
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.35
+      Cell Size: 0.5
+      Class: rviz_default_plugins/Grid
+      Color: 160; 160; 164
+      Enabled: true
+      Name: Grid
+      Plane: XY
+      Plane Cell Count: 12
+      Value: true
+    - Class: rviz_default_plugins/TF
+      Enabled: false
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Value: false
+    - Class: moveit_task_constructor/Motion Planning Tasks
+      Enabled: true
+      Interrupt Display: false
+      Loop Animation: true
+      Name: Motion Planning Tasks
+      Robot Description: robot_description
+      Show Trail: false
+      State Display Time: 0.05 s
+      Task Solution Topic: /solution
+      Value: true
+    - Class: moveit_rviz_plugin/PlanningScene
+      Enabled: true
+      Move Group Namespace: ""
+      Name: PlanningScene
+      Planning Scene Topic: /monitored_planning_scene
+      Robot Description: robot_description
+      Scene Geometry:
+        Scene Alpha: 0.65
+        Scene Color: 80; 170; 90
+        Show Scene Geometry: true
+        Voxel Coloring: Z-Axis
+        Voxel Rendering: Occupied Voxels
+      Scene Robot:
+        Robot Alpha: 1
+        Show Robot Collision: false
+        Show Robot Visual: true
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Workcell Markers
+      Topic: /fr3_vis/markers
+      Value: true
+    - Class: moveit_rviz_plugin/RobotState
+      Enabled: true
+      Name: TopCircle Collision Ghost
+      Robot Description: robot_description
+      Robot State Topic: /fr3_vis/collision_robot_state
+      Value: true
+    - Class: moveit_rviz_plugin/Trajectory
+      Enabled: true
+      Name: Planned Trajectory
+      Robot Description: robot_description
+      Trajectory Topic: /display_planned_path
+      Value: true
+  Enabled: true
+  Global Options:
+    Background Color: 38; 42; 48
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Value: true
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 3.2
+      Focal Point:
+        X: 0.05
+        Y: 0.40
+        Z: 0.85
+      Name: Current View
+      Pitch: 0.38
+      Target Frame: <Fixed Frame>
+      Yaw: 1.05
+    Saved: ~
+Window Geometry:
+  Height: 980
+  Width: 1720
+  X: 40
+  Y: 20

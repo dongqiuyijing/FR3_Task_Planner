@@ -253,33 +253,47 @@ sensor_msgs::msg::JointState::SharedPtr waitForFreshJoints(const rclcpp::Node::S
   return latest;
 }
 
-void inspectLiveScene(const rclcpp::Node::SharedPtr& node, const std::string& object_id,
-                      bool& world_present, bool& attached_present)
+struct LiveSceneReport
 {
-  world_present = attached_present = false;
+  bool object_world = false;
+  bool object_attached = false;
+  bool table = false;
+  bool column = false;
+  std::vector<std::string> world_ids;
+};
+
+LiveSceneReport inspectLiveScene(const rclcpp::Node::SharedPtr& node, const std::string& object_id,
+                                 const std::string& table_name, const std::string& column_name)
+{
+  LiveSceneReport report;
   auto client = node->create_client<moveit_msgs::srv::GetPlanningScene>("get_planning_scene");
-  if (!client->wait_for_service(std::chrono::seconds(5)))
+  if (!client->wait_for_service(std::chrono::seconds(8)))
   {
-    return;
+    return report;
   }
   auto request = std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();
   request->components.components =
       moveit_msgs::msg::PlanningSceneComponents::WORLD_OBJECT_NAMES |
+      moveit_msgs::msg::PlanningSceneComponents::WORLD_OBJECT_GEOMETRY |
       moveit_msgs::msg::PlanningSceneComponents::ROBOT_STATE_ATTACHED_OBJECTS;
   auto future = client->async_send_request(request);
   if (future.wait_for(std::chrono::seconds(5)) != std::future_status::ready)
   {
-    return;
+    return report;
   }
   const auto response = future.get();
   for (const auto& obj : response->scene.world.collision_objects)
   {
-    world_present = world_present || obj.id == object_id;
+    report.world_ids.push_back(obj.id);
+    report.object_world = report.object_world || obj.id == object_id;
+    report.table = report.table || obj.id == table_name;
+    report.column = report.column || obj.id == column_name;
   }
   for (const auto& obj : response->scene.robot_state.attached_collision_objects)
   {
-    attached_present = attached_present || obj.object.id == object_id;
+    report.object_attached = report.object_attached || obj.object.id == object_id;
   }
+  return report;
 }
 
 void shutdownSpinner(rclcpp::executors::MultiThreadedExecutor& executor, std::thread& spinner)
@@ -549,6 +563,44 @@ void addAxes(visualization_msgs::msg::MarkerArray& arr, int id0, const Eigen::Is
   addArrow(arr, id0 + 2, o, o + length * pose.linear().col(2), rgba(0.2f, 0.45f, 1.0f, 1.0f), ns);
 }
 
+void addCube(visualization_msgs::msg::MarkerArray& arr, int id, const Eigen::Vector3d& center,
+             const Eigen::Vector3d& size, const std_msgs::msg::ColorRGBA& color,
+             const std::string& ns)
+{
+  auto m = baseMarker(id, ns, visualization_msgs::msg::Marker::CUBE);
+  m.pose.position = toPoint(center);
+  m.scale.x = size.x();
+  m.scale.y = size.y();
+  m.scale.z = size.z();
+  m.color = color;
+  arr.markers.push_back(m);
+}
+
+void addCylinder(visualization_msgs::msg::MarkerArray& arr, int id, const Eigen::Vector3d& center,
+                 double radius, double height, const std_msgs::msg::ColorRGBA& color,
+                 const std::string& ns)
+{
+  auto m = baseMarker(id, ns, visualization_msgs::msg::Marker::CYLINDER);
+  m.pose.position = toPoint(center);
+  m.scale.x = 2.0 * radius;
+  m.scale.y = 2.0 * radius;
+  m.scale.z = height;
+  m.color = color;
+  arr.markers.push_back(m);
+}
+
+struct WorkcellGeom
+{
+  Eigen::Vector3d table_center = Eigen::Vector3d::Zero();
+  Eigen::Vector3d table_size = Eigen::Vector3d::Zero();
+  Eigen::Vector3d column_center = Eigen::Vector3d::Zero();
+  Eigen::Vector3d column_size = Eigen::Vector3d::Zero();
+  Eigen::Vector3d part_center = Eigen::Vector3d::Zero();
+  Eigen::Vector3d robot_base = Eigen::Vector3d::Zero();
+  double part_radius = 0.0075;
+  double part_height = 0.035;
+};
+
 Eigen::Isometry3d poseInWorld(const geometry_msgs::msg::PoseStamped& pose,
                               const Eigen::Isometry3d& t_world_base)
 {
@@ -757,57 +809,79 @@ moveit_msgs::msg::DisplayTrajectory makeDisplayTrajectory(
 visualization_msgs::msg::MarkerArray buildStaticMarkers(
     const Eigen::Vector3d& p1, const Eigen::Vector3d& d1, const Eigen::Vector3d& up,
     const Eigen::Isometry3d& a_tcp, const Eigen::Isometry3d& b_tcp,
-    const Eigen::Isometry3d& c_tcp, const Eigen::Isometry3d& a_obj,
-    const Eigen::Isometry3d& b_obj, const Eigen::Isometry3d& c_obj,
-    const Eigen::Vector3d& column_center, const GhostPick& ghost, const std::string& stage_text)
+    const Eigen::Isometry3d& c_tcp, const WorkcellGeom& workcell, const GhostPick& ghost,
+    const std::string& stage_text)
 {
   visualization_msgs::msg::MarkerArray arr;
-  addSphere(arr, 1, p1, 0.03, rgba(0.1f, 0.75f, 1.0f, 0.95f), "p1");
-  addText(arr, 2, p1 + Eigen::Vector3d(0.0, 0.0, 0.06), "P1", rgba(0.8f, 0.95f, 1.0f, 1.0f), 0.04,
-          "p1");
-  addArrow(arr, 3, p1, p1 + 0.18 * d1, rgba(1.0f, 0.85f, 0.1f, 1.0f), "d1");
-  addText(arr, 4, p1 + 0.20 * d1, "D1 / camera-facing normal", rgba(1.0f, 0.9f, 0.3f, 1.0f), 0.035,
-          "d1");
-  addArrow(arr, 5, p1, p1 + 0.18 * up, rgba(0.85f, 0.25f, 0.95f, 1.0f), "up");
-  addText(arr, 6, p1 + 0.20 * up, "preferred up", rgba(0.95f, 0.7f, 1.0f, 1.0f), 0.035, "up");
 
-  addSphere(arr, 10, a_tcp.translation(), 0.018, rgba(0.1f, 0.85f, 0.2f, 0.95f), "side_pos_y");
-  addAxes(arr, 11, a_tcp, 0.08, "side_pos_y_tcp");
-  addText(arr, 14, a_tcp.translation() + Eigen::Vector3d(0.0, 0.0, 0.07),
-          "side_pos_y TCP  REACHABLE", rgba(0.2f, 1.0f, 0.3f, 1.0f), 0.03, "side_pos_y");
-  addSphere(arr, 15, a_obj.translation(), 0.012, rgba(0.2f, 0.7f, 0.3f, 0.8f), "side_pos_y_obj");
-  addText(arr, 16, a_obj.translation() + Eigen::Vector3d(0.0, 0.04, 0.0), "side_pos_y object",
-          rgba(0.4f, 1.0f, 0.5f, 1.0f), 0.025, "side_pos_y");
+  addCube(arr, 1, workcell.table_center, workcell.table_size, rgba(0.55f, 0.38f, 0.18f, 0.28f),
+          "workcell/table");
+  addText(arr, 2,
+          workcell.table_center + Eigen::Vector3d(0.0, 0.0, 0.5 * workcell.table_size.z() + 0.06),
+          "TABLE", rgba(1.0f, 0.85f, 0.45f, 1.0f), 0.05, "workcell/table_label");
 
-  addSphere(arr, 20, b_tcp.translation(), 0.018, rgba(0.1f, 0.85f, 0.2f, 0.95f), "side_neg_y");
-  addAxes(arr, 21, b_tcp, 0.08, "side_neg_y_tcp");
-  addText(arr, 24, b_tcp.translation() + Eigen::Vector3d(0.0, 0.0, 0.07),
-          "side_neg_y TCP  REACHABLE", rgba(0.2f, 1.0f, 0.3f, 1.0f), 0.03, "side_neg_y");
-  addSphere(arr, 25, b_obj.translation(), 0.012, rgba(0.2f, 0.7f, 0.3f, 0.8f), "side_neg_y_obj");
-  addText(arr, 26, b_obj.translation() + Eigen::Vector3d(0.0, -0.04, 0.0), "side_neg_y object",
-          rgba(0.4f, 1.0f, 0.5f, 1.0f), 0.025, "side_neg_y");
+  addCube(arr, 3, workcell.column_center, workcell.column_size, rgba(0.35f, 0.45f, 0.55f, 0.30f),
+          "workcell/column");
+  addText(arr, 4,
+          workcell.column_center + Eigen::Vector3d(0.0, 0.14, 0.5 * workcell.column_size.z() + 0.04),
+          "MOUNTING COLUMN", rgba(0.75f, 0.85f, 1.0f, 1.0f), 0.045, "workcell/column_label");
 
-  addSphere(arr, 30, c_tcp.translation(), 0.022, rgba(1.0f, 0.08f, 0.08f, 0.95f), "top_circle");
-  addAxes(arr, 31, c_tcp, 0.08, "top_circle_tcp");
-  addText(arr, 34, c_tcp.translation() + Eigen::Vector3d(0.0, 0.0, 0.09), "top_circle  UNREACHABLE",
-          rgba(1.0f, 0.2f, 0.2f, 1.0f), 0.035, "top_circle");
-  addText(arr, 35, c_tcp.translation() + Eigen::Vector3d(0.0, 0.0, 0.14),
-          "Top Circle\nTarget valid geometrically\nKinematic IK exists\nBut all current IK collide "
-          "with mounting column",
-          rgba(1.0f, 0.55f, 0.45f, 1.0f), 0.028, "top_circle");
-  addSphere(arr, 36, c_obj.translation(), 0.012, rgba(0.8f, 0.1f, 0.1f, 0.8f), "top_circle_obj");
+  addCylinder(arr, 5, workcell.part_center, workcell.part_radius, workcell.part_height,
+              rgba(0.95f, 0.75f, 0.15f, 0.95f), "workcell/part");
+  addSphere(arr, 6, workcell.part_center, 0.04, rgba(1.0f, 0.9f, 0.1f, 0.22f),
+            "workcell/part_hint");
+  addArrow(arr, 7, workcell.part_center + Eigen::Vector3d(0.0, -0.12, 0.10), workcell.part_center,
+           rgba(1.0f, 0.85f, 0.1f, 1.0f), "workcell/part_label");
+  addText(arr, 8, workcell.part_center + Eigen::Vector3d(0.0, -0.14, 0.12),
+          "PART\nsmall_part 15mm x 35mm\nVISUAL MARKER ONLY", rgba(1.0f, 0.92f, 0.4f, 1.0f), 0.03,
+          "workcell/part_label");
 
-  addText(arr, 40, Eigen::Vector3d(0.0, 0.15, 1.45), std::string("Current stage:\n") + stage_text,
-          rgba(1.0f, 1.0f, 1.0f, 1.0f), 0.05, "stage");
+  addText(arr, 9, workcell.robot_base + Eigen::Vector3d(0.0, -0.08, 0.08), "FR3 BASE",
+          rgba(0.85f, 0.95f, 1.0f, 1.0f), 0.04, "workcell/base_label");
 
-  addText(arr, 50, column_center + Eigen::Vector3d(0.0, 0.12, 0.55),
+  addSphere(arr, 10, p1, 0.03, rgba(0.1f, 0.75f, 1.0f, 0.95f), "inspection/p1");
+  addText(arr, 11, p1 + Eigen::Vector3d(0.0, 0.0, 0.07), "P1 / INSPECTION CENTER",
+          rgba(0.8f, 0.95f, 1.0f, 1.0f), 0.038, "inspection/p1");
+  addArrow(arr, 12, p1, p1 + 0.20 * d1, rgba(1.0f, 0.85f, 0.1f, 1.0f), "inspection/d1");
+  addText(arr, 13, p1 + 0.23 * d1, "D1 / FACE NORMAL / CAMERA DIRECTION",
+          rgba(1.0f, 0.9f, 0.3f, 1.0f), 0.032, "inspection/d1");
+  addArrow(arr, 14, p1, p1 + 0.20 * up, rgba(0.85f, 0.25f, 0.95f, 1.0f), "inspection/up");
+  addText(arr, 15, p1 + 0.23 * up, "UP / WORLD +Z", rgba(0.95f, 0.7f, 1.0f, 1.0f), 0.032,
+          "inspection/up");
+
+  addSphere(arr, 20, a_tcp.translation(), 0.018, rgba(0.1f, 0.85f, 0.2f, 0.95f),
+            "inspection/view_a");
+  addAxes(arr, 21, a_tcp, 0.09, "inspection/view_a");
+  addText(arr, 24, a_tcp.translation() + Eigen::Vector3d(0.08, 0.04, 0.08),
+          "VIEW A\nside_pos_y\nREACHABLE", rgba(0.2f, 1.0f, 0.3f, 1.0f), 0.032, "inspection/view_a");
+
+  addSphere(arr, 30, b_tcp.translation(), 0.018, rgba(0.1f, 0.85f, 0.2f, 0.95f),
+            "inspection/view_b");
+  addAxes(arr, 31, b_tcp, 0.09, "inspection/view_b");
+  addText(arr, 34, b_tcp.translation() + Eigen::Vector3d(0.08, -0.06, 0.08),
+          "VIEW B\nside_neg_y\nREACHABLE", rgba(0.2f, 1.0f, 0.3f, 1.0f), 0.032, "inspection/view_b");
+
+  addSphere(arr, 40, c_tcp.translation(), 0.022, rgba(1.0f, 0.08f, 0.08f, 0.95f),
+            "inspection/view_c");
+  addAxes(arr, 41, c_tcp, 0.09, "inspection/view_c");
+  addText(arr, 44, c_tcp.translation() + Eigen::Vector3d(0.0, 0.0, 0.12),
+          "VIEW C\ntop_circle\nUNREACHABLE\nFOREARM <-> COLUMN COLLISION",
+          rgba(1.0f, 0.25f, 0.2f, 1.0f), 0.032, "inspection/view_c");
+
+  addText(arr, 50, Eigen::Vector3d(0.0, 0.15, 1.48), std::string("Current stage:\n") + stage_text,
+          rgba(1.0f, 1.0f, 1.0f, 1.0f), 0.05, "stage/current");
+
+  addText(arr, 60,
+          workcell.column_center + Eigen::Vector3d(0.12, 0.16, 0.35),
           "Collision: forearm_link <-> mounting_column", rgba(1.0f, 0.15f, 0.15f, 1.0f), 0.035,
-          "collision");
+          "collision/warning");
   if (ghost.contact_valid)
   {
-    addSphere(arr, 51, ghost.contact_world, 0.03, rgba(1.0f, 0.0f, 0.0f, 1.0f), "collision");
-    addText(arr, 52, ghost.contact_world + Eigen::Vector3d(0.0, 0.0, 0.05),
-            "forearm_link <-> mounting_column", rgba(1.0f, 0.4f, 0.4f, 1.0f), 0.03, "collision");
+    addSphere(arr, 61, ghost.contact_world, 0.03, rgba(1.0f, 0.0f, 0.0f, 1.0f),
+              "collision/contact");
+    addText(arr, 62, ghost.contact_world + Eigen::Vector3d(0.0, 0.0, 0.05),
+            "forearm_link <-> mounting_column", rgba(1.0f, 0.4f, 0.4f, 1.0f), 0.03,
+            "collision/contact");
   }
   return arr;
 }
@@ -834,7 +908,7 @@ int main(int argc, char** argv)
           static_cast<int>(node->get_parameter("startup_timeout_sec").as_int()) :
           90;
 
-  RCLCPP_INFO(node->get_logger(), "========== STEP 11C SIM VISUALIZATION ==========");
+  RCLCPP_INFO(node->get_logger(), "========== STEP 11D WORKCELL VISUALIZATION ==========");
   RCLCPP_INFO(node->get_logger(), "[VIS] visualize_only=%s execute_gazebo=%s",
               visualize_only ? "true" : "false", execute_gazebo ? "true" : "false");
   RCLCPP_INFO(node->get_logger(), "[VIS] top_circle will NOT be executed");
@@ -874,8 +948,22 @@ int main(int argc, char** argv)
   const double pos_tol = getDouble(node, "position_tolerance");
   const double ori_tol_deg = getDouble(node, "orientation_tolerance_deg");
   const double planning_time = getDouble(node, "planning_time");
-  const Eigen::Vector3d column_center(getDouble(node, "column_cx"), getDouble(node, "column_cy"),
-                                      getDouble(node, "column_cz"));
+  WorkcellGeom workcell;
+  workcell.table_center = Eigen::Vector3d(getDouble(node, "table_cx"), getDouble(node, "table_cy"),
+                                          getDouble(node, "table_cz"));
+  workcell.table_size = Eigen::Vector3d(getDouble(node, "table_dx"), getDouble(node, "table_dy"),
+                                        getDouble(node, "table_dz"));
+  workcell.column_center = Eigen::Vector3d(getDouble(node, "column_cx"), getDouble(node, "column_cy"),
+                                           getDouble(node, "column_cz"));
+  workcell.column_size = Eigen::Vector3d(getDouble(node, "column_dx"), getDouble(node, "column_dy"),
+                                         getDouble(node, "column_dz"));
+  workcell.part_center =
+      Eigen::Vector3d(object_world.pose.position.x, object_world.pose.position.y,
+                      object_world.pose.position.z);
+  workcell.robot_base =
+      Eigen::Vector3d(world_base.pose.position.x, world_base.pose.position.y, world_base.pose.position.z);
+  workcell.part_radius = object_radius;
+  workcell.part_height = object_height;
   const auto all_rolls = readRollPoses(node);
   const Eigen::Isometry3d t_world_base = poseToIso(world_base.pose);
 
@@ -890,22 +978,18 @@ int main(int argc, char** argv)
   auto a_tcp = std::make_shared<Eigen::Isometry3d>(poseInWorld(source.tcp, t_world_base));
   auto b_tcp = std::make_shared<Eigen::Isometry3d>(poseInWorld(target.tcp, t_world_base));
   auto c_tcp = std::make_shared<Eigen::Isometry3d>(Eigen::Isometry3d::Identity());
-  auto a_obj = std::make_shared<Eigen::Isometry3d>(poseInWorld(source.object, t_world_base));
-  auto b_obj = std::make_shared<Eigen::Isometry3d>(poseInWorld(target.object, t_world_base));
-  auto c_obj = std::make_shared<Eigen::Isometry3d>(Eigen::Isometry3d::Identity());
   for (const auto& roll : all_rolls)
   {
     if (roll.view == "top_circle" && std::abs(roll.roll_deg) < 1e-9)
     {
       *c_tcp = poseInWorld(roll.tcp, t_world_base);
-      *c_obj = poseInWorld(roll.object, t_world_base);
       break;
     }
   }
 
   auto publish_vis = [&]() {
-    auto markers = buildStaticMarkers(p1, d1, preferred_up, *a_tcp, *b_tcp, *c_tcp, *a_obj, *b_obj,
-                                      *c_obj, column_center, *ghost_pick, *stage_text);
+    auto markers = buildStaticMarkers(p1, d1, preferred_up, *a_tcp, *b_tcp, *c_tcp, workcell,
+                                      *ghost_pick, *stage_text);
     marker_pub->publish(markers);
     if (!ghost_msg->state.joint_state.name.empty() ||
         !ghost_msg->state.multi_dof_joint_state.joint_names.empty())
@@ -926,6 +1010,10 @@ int main(int argc, char** argv)
 
   std::string robot_description;
   node->get_parameter("robot_description", robot_description);
+  const bool urdf_has_world = robot_description.find("name=\"world\"") != std::string::npos ||
+                              robot_description.find("name='world'") != std::string::npos;
+  RCLCPP_INFO(node->get_logger(), "robot_description contains world link: %s",
+              urdf_has_world ? "YES" : "NO");
   const SafetyReport safety = checkSafety(node, robot_description);
   RCLCPP_INFO(node->get_logger(), "========== SAFETY ISOLATION ==========");
   RCLCPP_INFO(node->get_logger(), "ROS_DOMAIN_ID: %s", safety.domain.c_str());
@@ -956,9 +1044,33 @@ int main(int argc, char** argv)
   executor.add_node(node);
   std::thread spinner([&executor]() { executor.spin(); });
 
-  bool live_world_before = false;
-  bool live_attached_before = false;
-  inspectLiveScene(node, object_id, live_world_before, live_attached_before);
+  LiveSceneReport live_before;
+  for (int attempt = 0; attempt < 40 && rclcpp::ok(); ++attempt)
+  {
+    live_before = inspectLiveScene(node, object_id, table_name, column_name);
+    if (live_before.table && live_before.column)
+    {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+  }
+  {
+    std::ostringstream ids;
+    for (size_t i = 0; i < live_before.world_ids.size(); ++i)
+    {
+      if (i)
+      {
+        ids << ", ";
+      }
+      ids << live_before.world_ids[i];
+    }
+    RCLCPP_INFO(node->get_logger(), "PlanningScene world objects: [%s]",
+                ids.str().empty() ? "none" : ids.str().c_str());
+    RCLCPP_INFO(node->get_logger(), "PlanningScene table=%s column=%s part_world=%s part_attached=%s",
+                live_before.table ? "YES" : "NO", live_before.column ? "YES" : "NO",
+                live_before.object_world ? "YES" : "NO",
+                live_before.object_attached ? "YES" : "NO");
+  }
 
   const auto before_msg = waitForFreshJoints(node, std::chrono::seconds(startup_timeout));
   if (!before_msg)
@@ -1151,7 +1263,7 @@ int main(int argc, char** argv)
   *stage_text = "TOP CIRCLE COLLISION DIAGNOSTIC";
   publish_vis();
 
-  std::ofstream yaml("/tmp/fr3_step11c_visualization.yaml");
+  std::ofstream yaml("/tmp/fr3_step11d_workcell.yaml");
   yaml << "status: PASS\n";
   yaml << "sequence: Home -> PreGrasp -> Grasp -> Lift -> " << source.name << " -> " << target.name
        << "\n";
@@ -1168,10 +1280,17 @@ int main(int argc, char** argv)
   yaml << "execute_gazebo_implemented: false\n";
   yaml << "real_robot_commands_sent: false\n";
   yaml << "ros_domain_id: \"" << safety.domain << "\"\n";
+  yaml << "urdf_has_world: " << (urdf_has_world ? "true" : "false") << "\n";
+  yaml << "planning_scene_table: " << (live_before.table ? "true" : "false") << "\n";
+  yaml << "planning_scene_column: " << (live_before.column ? "true" : "false") << "\n";
   yaml << "p1: [" << p1.x() << ", " << p1.y() << ", " << p1.z() << "]\n";
   yaml << "d1: [" << d1.x() << ", " << d1.y() << ", " << d1.z() << "]\n";
   yaml << "preferred_up: [" << preferred_up.x() << ", " << preferred_up.y() << ", "
        << preferred_up.z() << "]\n";
+  yaml << "table_center: [" << workcell.table_center.x() << ", " << workcell.table_center.y()
+       << ", " << workcell.table_center.z() << "]\n";
+  yaml << "column_center: [" << workcell.column_center.x() << ", " << workcell.column_center.y()
+       << ", " << workcell.column_center.z() << "]\n";
   yaml.close();
 
   const auto after_msg = waitForFreshJoints(node, std::chrono::seconds(5));
@@ -1186,12 +1305,16 @@ int main(int argc, char** argv)
     RCLCPP_INFO(node->get_logger(), "Robot moved because of this node? %s",
                 drift > 0.02 ? "YES" : "NO");
   }
-  bool live_world_after = false;
-  bool live_attached_after = false;
-  inspectLiveScene(node, object_id, live_world_after, live_attached_after);
-  RCLCPP_INFO(node->get_logger(), "LIVE SCENE after: world=%s attached=%s (before world=%s attached=%s)",
-              live_world_after ? "YES" : "NO", live_attached_after ? "YES" : "NO",
-              live_world_before ? "YES" : "NO", live_attached_before ? "YES" : "NO");
+  const LiveSceneReport live_after =
+      inspectLiveScene(node, object_id, table_name, column_name);
+  RCLCPP_INFO(node->get_logger(),
+              "LIVE SCENE after: table=%s column=%s part_world=%s attached=%s "
+              "(before table=%s column=%s part_world=%s attached=%s)",
+              live_after.table ? "YES" : "NO", live_after.column ? "YES" : "NO",
+              live_after.object_world ? "YES" : "NO", live_after.object_attached ? "YES" : "NO",
+              live_before.table ? "YES" : "NO", live_before.column ? "YES" : "NO",
+              live_before.object_world ? "YES" : "NO",
+              live_before.object_attached ? "YES" : "NO");
   RCLCPP_INFO(node->get_logger(),
               "RViz: select the MTC solution in Motion Planning Tasks to replay "
               "Home→A→B. Red ghost is top_circle colliding IK, never executed.");
