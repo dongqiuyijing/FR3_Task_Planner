@@ -1,0 +1,70 @@
+status: FAIL
+failure_classification: BOTTOM_FACE_IK_UNREACHABLE
+note: >
+  Geometry for ARM1 C = object -Z original bottom is valid (72/72 rolls).
+  All 72 bottom-face TCP orientations returned raw IK = 0, so collision and
+  LOS were never evaluated on a live robot state. TCP translation matches
+  the old +Z C ([0, 0.4175, 1.2]); orientation is flipped so TCP +Z faces
+  the camera. Do not treat this as a collision or visibility result.
+p1: [0.000000000, 0.400000000, 1.200000000]
+camera_design_position: [0.000000000, 0.100000000, 1.200000000]
+camera_forward: [0, 1, 0]
+order: A,B,C(bottom_circle)
+arm1_c_semantic: bottom_circle
+arm1_c_physical: original_table_contact_bottom
+arm1_c_local_normal: [0.0, 0.0, -1.0]
+arm1_c_surface_local_center: [0.0, 0.0, -0.017500000]
+arm2_future_face: top_circle
+arm2_future_local_normal: [0.0, 0.0, 1.0]
+old_wrong_c: object_+Z_original_top
+old_wrong_c_visibility_valid: 0
+roll_step_deg: 5.000000000
+top_k: 10
+beam_width: 5
+edge_attempts: 3
+search_planning_time: 3.000000000
+prefix_ok: true
+prefix_time: 3.721913194
+view_A:
+  roll_samples: 72
+  orientation_valid: 72
+  raw_ik: 204
+  joint_valid: 204
+  collision_free: 142
+  visibility_valid: 142
+  vis_center_blocked: 0
+  vis_fraction_blocked: 0
+  vis_occluders: none
+  dominant_pair: mounting_column <-> upperarm_link
+  best_column_distance: 0.074799999
+view_B:
+  roll_samples: 72
+  orientation_valid: 72
+  raw_ik: 207
+  joint_valid: 207
+  collision_free: 143
+  visibility_valid: 143
+  vis_center_blocked: 0
+  vis_fraction_blocked: 0
+  vis_occluders: none
+  dominant_pair: mounting_column <-> upperarm_link
+  best_column_distance: 0.074799999
+view_C:
+  roll_samples: 72
+  orientation_valid: 72
+  raw_ik: 0
+  joint_valid: 0
+  collision_free: 0
+  visibility_valid: 0
+  vis_center_blocked: 0
+  vis_fraction_blocked: 0
+  vis_occluders: none
+  dominant_pair: none
+  best_column_distance: nan
+  canonical_tcp_xyz: [0.000000000, 0.417500000, 1.200000000]
+  canonical_tcp_xyzw: [0.000000000, 0.707106781, -0.707106781, 0.000000000]
+  canonical_object_xyzw: [0.000000000, 0.707106781, 0.707106781, 0.000000000]
+  object_minus_z_world: [0.0, -1.0, 0.0]
+  object_plus_z_world: [0.0, 1.0, 0.0]
+  tcp_plus_z_faces_camera: true
+  old_plus_z_c_tcp_xyzw: [0.000000000, 0.707106781, 0.707106781, 0.000000000]

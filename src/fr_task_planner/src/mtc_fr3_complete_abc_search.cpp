@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cmath>
 #include <fstream>
+#include <future>
 #include <iomanip>
 #include <limits>
 #include <map>
@@ -16,8 +17,11 @@
 #include <thread>
 #include <vector>
 
+#include <Eigen/Geometry>
 #include <geometry_msgs/msg/point.hpp>
 #include <moveit/collision_detection/collision_common.h>
+#include <moveit/planning_scene/planning_scene.h>
+#include <moveit/robot_model/robot_model.h>
 #include <moveit/robot_state/conversions.h>
 #include <moveit/task_constructor/solvers/pipeline_planner.h>
 #include <moveit/task_constructor/stages/current_state.h>
@@ -30,6 +34,7 @@
 #include <moveit_msgs/msg/collision_object.hpp>
 #include <moveit_msgs/msg/display_robot_state.hpp>
 #include <moveit_msgs/msg/display_trajectory.hpp>
+#include <moveit_msgs/msg/planning_scene_components.hpp>
 #include <moveit_msgs/srv/get_planning_scene.hpp>
 #include <moveit_task_constructor_msgs/msg/solution.hpp>
 #include <rclcpp/rclcpp.hpp>
@@ -42,8 +47,12 @@
 namespace
 {
 using fr_task_planner::applyJoints;
+using fr_task_planner::applyJointsToScene;
+using fr_task_planner::bottomCircleRoiDef;
 using fr_task_planner::checkGeometricVisibility;
+using fr_task_planner::cloneDiagnosticScene;
 using fr_task_planner::collectCollisionContacts;
+using fr_task_planner::CollisionCategory;
 using fr_task_planner::CollisionDiagConfig;
 using fr_task_planner::DesignCamera;
 using fr_task_planner::EndpointCandidate;
@@ -125,6 +134,118 @@ std::map<std::string, double> readHome(const rclcpp::Node::SharedPtr& node)
     home[name] = getDouble(node, "home_" + name);
   }
   return home;
+}
+
+std::map<std::string, double> readHomeDeg(const rclcpp::Node::SharedPtr& node,
+                                         const std::map<std::string, double>& home_rad)
+{
+  std::map<std::string, double> home;
+  for (const auto& name : kArmJoints)
+  {
+    const std::string key = "home_" + name + "_deg";
+    home[name] = node->has_parameter(key) ? getDouble(node, key) : home_rad.at(name) * 180.0 / M_PI;
+  }
+  return home;
+}
+
+std::string formatHomeList(const std::map<std::string, double>& joints)
+{
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(12);
+  oss << "[";
+  for (size_t i = 0; i < kArmJoints.size(); ++i)
+  {
+    if (i)
+    {
+      oss << ", ";
+    }
+    oss << joints.at(kArmJoints[i]);
+  }
+  oss << "]";
+  return oss.str();
+}
+
+DesignCamera cameraFromNode(const rclcpp::Node::SharedPtr& node)
+{
+  DesignCamera camera = fixedInspectionDesignCamera();
+  const double roll = node->has_parameter("camera_rpy_roll") ?
+                          getDouble(node, "camera_rpy_roll") :
+                          -2.35619449;
+  const double pitch = node->has_parameter("camera_rpy_pitch") ? getDouble(node, "camera_rpy_pitch") : 0.0;
+  const double yaw = node->has_parameter("camera_rpy_yaw") ? getDouble(node, "camera_rpy_yaw") : 0.0;
+  const Eigen::Matrix3d rot =
+      (Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()) *
+       Eigen::AngleAxisd(pitch, Eigen::Vector3d::UnitY()) *
+       Eigen::AngleAxisd(roll, Eigen::Vector3d::UnitX()))
+          .toRotationMatrix();
+  camera.optical_center_world = Eigen::Vector3d(0.0, 0.0, 1.40);
+  camera.optical_forward_world = (rot * Eigen::Vector3d::UnitZ()).normalized();
+  camera.image_up_world = (-(rot * Eigen::Vector3d::UnitY())).normalized();
+  if (node->has_parameter("camera_design_x"))
+  {
+    camera.optical_center_world = Eigen::Vector3d(getDouble(node, "camera_design_x"),
+                                                  getDouble(node, "camera_design_y"),
+                                                  getDouble(node, "camera_design_z"));
+  }
+  if (node->has_parameter("camera_forward_x"))
+  {
+    camera.optical_forward_world =
+        Eigen::Vector3d(getDouble(node, "camera_forward_x"), getDouble(node, "camera_forward_y"),
+                        getDouble(node, "camera_forward_z"))
+            .normalized();
+  }
+  return camera;
+}
+
+std::string vecYaml(const Eigen::Vector3d& v)
+{
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(9);
+  oss << "[" << v.x() << ", " << v.y() << ", " << v.z() << "]";
+  return oss.str();
+}
+
+std::string isoPoseYaml(const Eigen::Isometry3d& t)
+{
+  const Eigen::Quaterniond q(t.linear());
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(9);
+  oss << "{xyz: [" << t.translation().x() << ", " << t.translation().y() << ", "
+      << t.translation().z() << "], xyzw: [" << q.x() << ", " << q.y() << ", " << q.z() << ", "
+      << q.w() << "]}";
+  return oss.str();
+}
+
+planning_scene::PlanningScenePtr fetchPlanningScene(
+    const rclcpp::Node::SharedPtr& node, const moveit::core::RobotModelConstPtr& model)
+{
+  auto client = node->create_client<moveit_msgs::srv::GetPlanningScene>("get_planning_scene");
+  if (!client->wait_for_service(std::chrono::seconds(30)))
+  {
+    return nullptr;
+  }
+  auto req = std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();
+  req->components.components =
+      moveit_msgs::msg::PlanningSceneComponents::SCENE_SETTINGS |
+      moveit_msgs::msg::PlanningSceneComponents::ROBOT_STATE |
+      moveit_msgs::msg::PlanningSceneComponents::ROBOT_STATE_ATTACHED_OBJECTS |
+      moveit_msgs::msg::PlanningSceneComponents::WORLD_OBJECT_NAMES |
+      moveit_msgs::msg::PlanningSceneComponents::WORLD_OBJECT_GEOMETRY |
+      moveit_msgs::msg::PlanningSceneComponents::TRANSFORMS |
+      moveit_msgs::msg::PlanningSceneComponents::ALLOWED_COLLISION_MATRIX |
+      moveit_msgs::msg::PlanningSceneComponents::LINK_PADDING_AND_SCALING;
+  auto future = client->async_send_request(req);
+  if (future.wait_for(std::chrono::seconds(30)) != std::future_status::ready)
+  {
+    return nullptr;
+  }
+  auto resp = future.get();
+  auto scene = std::make_shared<planning_scene::PlanningScene>(model);
+  scene->setPlanningSceneMsg(resp->scene);
+  return scene;
 }
 
 geometry_msgs::msg::PoseStamped readPose(const rclcpp::Node::SharedPtr& node,
@@ -356,9 +477,18 @@ void addPrefixStages(moveit::task_constructor::Task& task, const rclcpp::Node::S
                      const geometry_msgs::msg::PoseStamped& pregrasp,
                      const geometry_msgs::msg::PoseStamped& grasp,
                      const geometry_msgs::msg::PoseStamped& lift, double object_height,
-                     double object_radius, double planning_time)
+                     double object_radius, double planning_time,
+                     const std::map<std::string, double>& home)
 {
   task.add(std::make_unique<moveit::task_constructor::stages::CurrentState>("CurrentState"));
+  auto ompl_home =
+      std::make_shared<moveit::task_constructor::solvers::PipelinePlanner>(node, kOmplPipeline);
+  ompl_home->setTimeout(planning_time);
+  auto move_home = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo Home", ompl_home);
+  move_home->setGroup(group);
+  move_home->setGoal(home);
+  move_home->setTimeout(planning_time);
+  task.add(std::move(move_home));
   auto prepare = std::make_unique<moveit::task_constructor::stages::ModifyPlanningScene>(
       "Prepare Object On Table");
   prepare->addObject(makeCylinder(object_id, object_scene, object_height, object_radius));
@@ -845,7 +975,10 @@ struct SearchViz
   Eigen::Vector3d column_c = Eigen::Vector3d::Zero();
   Eigen::Vector3d column_s = Eigen::Vector3d::Zero();
   Eigen::Vector3d part0 = Eigen::Vector3d::Zero();
-  std::string hud = "STEP 12";
+  Eigen::Isometry3d t_world_base = Eigen::Isometry3d::Identity();
+  double object_height = 0.035;
+  double object_radius = 0.0075;
+  std::string hud = "STEP 12C";
   std::string a_status = "PENDING";
   std::string b_status = "PENDING";
   std::string c_status = "PENDING";
@@ -854,6 +987,19 @@ struct SearchViz
   std::optional<EndpointCandidate> best;
   std::chrono::steady_clock::time_point last_pub{};
   double min_period = 0.4;
+
+  Eigen::Isometry3d currentObjectWorld() const
+  {
+    if (current)
+    {
+      return t_world_base * poseToIso(current->object_target.pose);
+    }
+    if (best)
+    {
+      return t_world_base * poseToIso(best->object_target.pose);
+    }
+    return Eigen::Isometry3d::Identity();
+  }
 
   void publish(const rclcpp::Node::SharedPtr& node, bool force = false)
   {
@@ -873,23 +1019,55 @@ struct SearchViz
     addCube(arr, 1, table_c, table_s, rgba(0.45f, 0.32f, 0.18f, 0.35f), "workcell/table");
     addCube(arr, 2, column_c, column_s, rgba(0.35f, 0.35f, 0.4f, 0.35f), "workcell/column");
     addSphere(arr, 3, part0, 0.012, rgba(0.9f, 0.8f, 0.1f, 0.9f), "workcell/part");
+    const Eigen::Vector3d initial_bottom = part0 + Eigen::Vector3d(0.0, 0.0, -0.5 * object_height);
+    const Eigen::Vector3d initial_top = part0 + Eigen::Vector3d(0.0, 0.0, 0.5 * object_height);
+    addSphere(arr, 4, initial_bottom, 0.008, rgba(0.1f, 0.95f, 0.35f, 1.0f), "identity/initial_bottom");
+    addSphere(arr, 5, initial_top, 0.008, rgba(0.7f, 0.7f, 0.85f, 0.55f), "identity/initial_top");
+    addText(arr, 6, initial_bottom + Eigen::Vector3d(0.08, 0.0, 0.0),
+            "INITIAL BOTTOM\nobject -Z\nz=0.750 TABLE CONTACT", rgba(0.2f, 1.0f, 0.4f, 1.0f), 0.022,
+            "identity/initial_bottom");
+    addText(arr, 7, initial_top + Eigen::Vector3d(0.08, 0.0, 0.02),
+            "INITIAL TOP\nobject +Z\nz=0.785 ARM2 FUTURE", rgba(0.75f, 0.75f, 0.9f, 0.7f), 0.02,
+            "identity/initial_top");
     addSphere(arr, 10, p1, 0.012, rgba(1.0f, 0.2f, 0.9f, 1.0f), "inspection/p1");
     addText(arr, 11, p1 + Eigen::Vector3d(0.0, 0.0, 0.06), "P1 SURFACE CENTER",
             rgba(1.0f, 0.4f, 1.0f, 1.0f), 0.03, "inspection/p1");
     addArrow(arr, 12, p1, p1 + 0.18 * d1, rgba(0.2f, 0.9f, 1.0f, 1.0f), "inspection/d1");
-    addText(arr, 13, p1 + 0.22 * d1, "FACE OUTWARD NORMAL -Y", rgba(0.3f, 0.95f, 1.0f, 1.0f), 0.028,
-            "inspection/d1");
+    addText(arr, 13, p1 + 0.22 * d1,
+            "TARGET SURFACE NORMAL\n[0, -0.707, +0.707]\nface outward toward camera",
+            rgba(0.3f, 0.95f, 1.0f, 1.0f), 0.026, "inspection/d1");
     addSphere(arr, 20, camera.optical_center_world, 0.02, rgba(1.0f, 0.55f, 0.1f, 1.0f),
               "inspection/camera");
     addArrow(arr, 21, camera.optical_center_world,
              camera.optical_center_world + 0.22 * camera.optical_forward_world,
              rgba(1.0f, 0.7f, 0.15f, 1.0f), "inspection/camera");
     addText(arr, 22, camera.optical_center_world + Eigen::Vector3d(0.05, 0.0, 0.08),
-            "CAMERA DESIGN POSITION\noptical +Y  (NOT calibrated)",
-            rgba(1.0f, 0.7f, 0.2f, 1.0f), 0.03, "inspection/camera");
-    addCircle(arr, 30, p1, d1, 0.0075, rgba(0.2f, 1.0f, 0.85f, 1.0f), "inspection/target_face");
-    addText(arr, 31, p1 + Eigen::Vector3d(0.0, -0.05, 0.08), "TARGET CIRCULAR / SIDE ROI",
-            rgba(0.3f, 1.0f, 0.85f, 1.0f), 0.026, "inspection/target_face");
+            "NEW CAMERA\n[0,0,1.40] RPY -135 deg\nforward [0,+0.707,-0.707]",
+            rgba(1.0f, 0.7f, 0.2f, 1.0f), 0.026, "inspection/camera");
+    addCircle(arr, 30, p1, d1, object_radius, rgba(0.15f, 1.0f, 0.35f, 1.0f), "inspection/c_bottom");
+    addText(arr, 31, p1 + Eigen::Vector3d(0.0, -0.08, 0.10),
+            "C — ORIGINAL BOTTOM FACE\nobject -Z\nTABLE-CONTACT FACE\nINSPECTED BY ARM 1",
+            rgba(0.15f, 1.0f, 0.4f, 1.0f), 0.028, "inspection/c_bottom");
+    const Eigen::Isometry3d t_obj = currentObjectWorld();
+    const Eigen::Vector3d bottom_c =
+        t_obj.translation() + t_obj.linear() * Eigen::Vector3d(0.0, 0.0, -0.5 * object_height);
+    const Eigen::Vector3d top_c =
+        t_obj.translation() + t_obj.linear() * Eigen::Vector3d(0.0, 0.0, 0.5 * object_height);
+    const Eigen::Vector3d bottom_n = (t_obj.linear() * Eigen::Vector3d(0.0, 0.0, -1.0)).normalized();
+    const Eigen::Vector3d top_n = (t_obj.linear() * Eigen::Vector3d(0.0, 0.0, 1.0)).normalized();
+    if (current || best)
+    {
+      addCircle(arr, 32, bottom_c, bottom_n, object_radius, rgba(0.1f, 1.0f, 0.25f, 1.0f),
+                "inspection/c_bottom_live");
+      addArrow(arr, 33, bottom_c, bottom_c + 0.12 * bottom_n, rgba(0.1f, 1.0f, 0.3f, 1.0f),
+               "inspection/c_bottom_live");
+      addCircle(arr, 34, top_c, top_n, object_radius, rgba(0.65f, 0.7f, 0.95f, 0.45f),
+                "inspection/top_reserved");
+      addSphere(arr, 35, top_c, 0.006, rgba(0.7f, 0.75f, 1.0f, 0.45f), "inspection/top_reserved");
+      addText(arr, 36, top_c + Eigen::Vector3d(0.0, 0.06, 0.06),
+              "ORIGINAL TOP FACE\nobject +Z\nNOT INSPECTED BY ARM 1\nRESERVED FOR ARM 2",
+              rgba(0.75f, 0.8f, 1.0f, 0.55f), 0.022, "inspection/top_reserved");
+    }
     int los_id = 40;
     for (size_t i = 0; i < vis.roi_world.size() && i < 8; ++i)
     {
@@ -900,9 +1078,10 @@ struct SearchViz
     }
     addText(arr, 60, Eigen::Vector3d(0.0, 0.55, 1.55), hud, rgba(1.0f, 1.0f, 1.0f, 1.0f), 0.04,
             "hud/status");
-    addText(arr, 61, Eigen::Vector3d(-0.25, 0.55, 1.40),
-            std::string("A ") + a_status + "\nB " + b_status + "\nC " + c_status,
-            rgba(0.9f, 0.95f, 1.0f, 1.0f), 0.032, "hud/views");
+    addText(arr, 61, Eigen::Vector3d(-0.28, 0.55, 1.38),
+            std::string("A +Y side  ") + a_status + "\nB -Y side  " + b_status +
+                "\nC ORIGINAL BOTTOM object -Z  " + c_status,
+            rgba(0.9f, 0.95f, 1.0f, 1.0f), 0.028, "hud/views");
     markers->publish(arr);
   }
 };
@@ -967,10 +1146,27 @@ int main(int argc, char** argv)
   options.automatically_declare_parameters_from_overrides(true);
   auto node = rclcpp::Node::make_shared("fr3_mtc_complete_abc_search", options);
 
-  RCLCPP_INFO(node->get_logger(), "========== STEP 12 FIXED ABC COMPLETE-TASK SEARCH ==========");
-  RCLCPP_INFO(node->get_logger(), "PLAN / SIM VISUALIZATION ONLY. No Gazebo execute. No real robot.");
+  RCLCPP_INFO(node->get_logger(),
+              "========== STEP 12C TILTED-CAMERA FIXED-ABC SEARCH ==========");
+  RCLCPP_INFO(node->get_logger(), "PLAN / RViz ONLY. No Gazebo execute. No real robot.");
+  RCLCPP_INFO(node->get_logger(),
+              "ARM1 C = bottom_circle = object -Z original table-contact face");
+  RCLCPP_INFO(node->get_logger(), "ARM2 future = top_circle = object +Z (not planned)");
 
   const auto home = readHome(node);
+  const auto home_deg = readHomeDeg(node, home);
+  RCLCPP_INFO(node->get_logger(), "HOME_DEG: %s", formatHomeList(home_deg).c_str());
+  RCLCPP_INFO(node->get_logger(), "HOME_RAD: %s", formatHomeList(home).c_str());
+  for (const auto& name : kArmJoints)
+  {
+    const double expected_rad = home_deg.at(name) * M_PI / 180.0;
+    if (std::abs(home.at(name) - expected_rad) > 1e-9)
+    {
+      RCLCPP_ERROR(node->get_logger(),
+                   "GEOMETRY_INVALID: %s deg/rad mismatch deg=%.12f rad=%.12f expected_rad=%.12f",
+                   name.c_str(), home_deg.at(name), home.at(name), expected_rad);
+    }
+  }
   const auto pregrasp = readPose(node, "pregrasp");
   const auto grasp = readPose(node, "grasp");
   const auto lift = readPose(node, "lift");
@@ -980,7 +1176,8 @@ int main(int argc, char** argv)
   const auto tcp_object = readPose(node, "tcp_object");
   const ViewGeom view_a = readViewGeom(node, "side_pos_y");
   const ViewGeom view_b = readViewGeom(node, "side_neg_y");
-  const ViewGeom view_c = readViewGeom(node, "top_circle");
+  const ViewGeom view_c = readViewGeom(node, "bottom_circle");
+  const ViewGeom view_top = readViewGeom(node, "top_circle");
   const Eigen::Vector3d p1(getDouble(node, "p1_x"), getDouble(node, "p1_y"), getDouble(node, "p1_z"));
   const Eigen::Vector3d d1 =
       Eigen::Vector3d(getDouble(node, "d1_x"), getDouble(node, "d1_y"), getDouble(node, "d1_z"))
@@ -1013,9 +1210,9 @@ int main(int argc, char** argv)
   const int prefix_retries = getInt(node, "prefix_retries", 5);
   const int complete_budget = getInt(node, "complete_candidate_budget", 40);
   const std::string winner_path = getString(node, "winner_output_path",
-                                            "/tmp/fr3_step12_best_sampled_complete_task.yaml");
+                                            "/tmp/fr3_step12c_best_sampled_complete_task.yaml");
   const std::string diag_path =
-      getString(node, "diagnostic_output_path", "/tmp/fr3_step12_search.yaml");
+      getString(node, "diagnostic_output_path", "/tmp/fr3_step12c_search.yaml");
   const bool visualize = getBool(node, "visualize_search", true);
   const double vis_hold = node->has_parameter("visualization_hold_seconds") ?
                               node->get_parameter("visualization_hold_seconds").as_double() :
@@ -1023,13 +1220,7 @@ int main(int argc, char** argv)
   const auto all_rolls = readRollPoses(node);
   const Eigen::Isometry3d t_world_base = poseToIso(world_base.pose);
   const Eigen::Isometry3d t_tcp_object = poseToIso(tcp_object.pose);
-  DesignCamera camera = fixedInspectionDesignCamera();
-  if (node->has_parameter("camera_design_x"))
-  {
-    camera.optical_center_world = Eigen::Vector3d(getDouble(node, "camera_design_x"),
-                                                  getDouble(node, "camera_design_y"),
-                                                  getDouble(node, "camera_design_z"));
-  }
+  DesignCamera camera = cameraFromNode(node);
 
   std::string failure_class = "SEARCH_BUDGET_EXHAUSTED";
   auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
@@ -1053,23 +1244,74 @@ int main(int argc, char** argv)
                                  getDouble(node, "column_dz"));
   viz.part0 = Eigen::Vector3d(object_world.pose.position.x, object_world.pose.position.y,
                               object_world.pose.position.z);
-  viz.hud = "STEP 12  P1.z=1.20  STATIC GEOMETRY";
+  viz.t_world_base = t_world_base;
+  viz.object_height = object_height;
+  viz.object_radius = object_radius;
+  viz.hud = "STEP 12C  TILTED CAMERA  ARM1 C = ORIGINAL BOTTOM";
 
-  const bool p1_ok = std::abs(p1.x()) < 1e-9 && std::abs(p1.y() - 0.4) < 1e-9 &&
+  const Eigen::Vector3d n_expected(0.0, -0.70710678, 0.70710678);
+  const Eigen::Vector3d cam_fwd_expected(0.0, 0.70710678, -0.70710678);
+  const bool p1_ok = std::abs(p1.x()) < 1e-9 && std::abs(p1.y() - 0.30) < 1e-9 &&
                      std::abs(p1.z() - 1.20) < 1e-9;
   if (!p1_ok)
   {
-    RCLCPP_ERROR(node->get_logger(), "GEOMETRY_INVALID: P1 is not [0,0.4,1.2], got [%.6f, %.6f, %.6f]",
+    RCLCPP_ERROR(node->get_logger(), "GEOMETRY_INVALID: P1 is not [0,0.3,1.2], got [%.6f, %.6f, %.6f]",
                  p1.x(), p1.y(), p1.z());
     failure_class = "GEOMETRY_INVALID";
   }
+  const bool cam_pos_ok = (camera.optical_center_world - Eigen::Vector3d(0.0, 0.0, 1.40)).norm() < 1e-9;
+  const bool cam_fwd_ok = (camera.optical_forward_world - cam_fwd_expected).norm() < 1e-5;
+  const bool n_ok = (d1 - n_expected).norm() < 1e-5;
+  const double cam_n_dot = camera.optical_forward_world.dot(d1);
+  RCLCPP_INFO(node->get_logger(), "camera position %s forward %s n_target %s fwd·n=%.6f",
+              vecYaml(camera.optical_center_world).c_str(),
+              vecYaml(camera.optical_forward_world).c_str(), vecYaml(d1).c_str(), cam_n_dot);
+  if (!cam_pos_ok || !cam_fwd_ok || !n_ok || cam_n_dot > -0.999)
+  {
+    RCLCPP_ERROR(node->get_logger(),
+                 "GEOMETRY_INVALID: camera/n_target regression failed pos_ok=%d fwd_ok=%d n_ok=%d "
+                 "dot=%.6f",
+                 cam_pos_ok, cam_fwd_ok, n_ok, cam_n_dot);
+    failure_class = "GEOMETRY_INVALID";
+  }
+  const bool c_face_ok = std::abs(view_c.normal_in_object.x()) < 1e-9 &&
+                         std::abs(view_c.normal_in_object.y()) < 1e-9 &&
+                         std::abs(view_c.normal_in_object.z() + 1.0) < 1e-9 &&
+                         std::abs(view_c.center_in_object.z() + 0.5 * object_height) < 1e-6;
+  const bool top_preserved = std::abs(view_top.normal_in_object.x()) < 1e-9 &&
+                             std::abs(view_top.normal_in_object.y()) < 1e-9 &&
+                             std::abs(view_top.normal_in_object.z() - 1.0) < 1e-9 &&
+                             std::abs(view_top.center_in_object.z() - 0.5 * object_height) < 1e-6;
+  if (!c_face_ok)
+  {
+    RCLCPP_ERROR(node->get_logger(),
+                 "GEOMETRY_INVALID: ARM1 C is not object -Z bottom. normal=[%.4f,%.4f,%.4f] "
+                 "center=[%.4f,%.4f,%.4f]",
+                 view_c.normal_in_object.x(), view_c.normal_in_object.y(), view_c.normal_in_object.z(),
+                 view_c.center_in_object.x(), view_c.center_in_object.y(), view_c.center_in_object.z());
+    failure_class = "GEOMETRY_INVALID";
+  }
+  if (!top_preserved)
+  {
+    RCLCPP_ERROR(node->get_logger(),
+                 "GEOMETRY_INVALID: top_circle was not preserved as object +Z. normal=[%.4f,%.4f,%.4f]",
+                 view_top.normal_in_object.x(), view_top.normal_in_object.y(),
+                 view_top.normal_in_object.z());
+    failure_class = "GEOMETRY_INVALID";
+  }
+  RCLCPP_INFO(node->get_logger(), "C physical identity: %s", bottomCircleRoiDef().physical.c_str());
 
   const std::array<const ViewGeom*, 3> views = { &view_a, &view_b, &view_c };
-  bool geom_pass = p1_ok;
+  bool geom_pass = p1_ok && c_face_ok && top_preserved && cam_pos_ok && cam_fwd_ok && n_ok &&
+                   cam_n_dot <= -0.999;
   for (const auto* view : views)
   {
     const auto rolls = filterRollsByView(all_rolls, view->name);
     int ori_ok = 0;
+    if (rolls.empty())
+    {
+      geom_pass = false;
+    }
     for (const auto& roll : rolls)
     {
       const auto g =
@@ -1090,6 +1332,14 @@ int main(int argc, char** argv)
   if (!geom_pass)
   {
     failure_class = "GEOMETRY_INVALID";
+    RCLCPP_ERROR(node->get_logger(), "GEOMETRY_INVALID: refusing search");
+    std::ofstream yaml(diag_path);
+    yaml << "status: FAIL\nfailure_classification: GEOMETRY_INVALID\n";
+    yaml << "p1: " << vecYaml(p1) << "\n";
+    yaml << "d1: " << vecYaml(d1) << "\n";
+    yaml << "camera_position: " << vecYaml(camera.optical_center_world) << "\n";
+    yaml << "camera_forward: " << vecYaml(camera.optical_forward_world) << "\n";
+    return 3;
   }
 
   auto helper = rclcpp::Node::make_shared("fr3_mtc_complete_abc_params");
@@ -1118,17 +1368,79 @@ int main(int argc, char** argv)
     shutdownSpinner(executor, spinner);
     return 2;
   }
-  if (maxJointError(actual, home) > home_tol)
+  const bool already_at_home = maxJointError(actual, home) <= home_tol;
+  RCLCPP_INFO(node->get_logger(),
+              "Current vs new Home max|dq|=%.6f rad  already_at_home=%s  (Home is an MTC MoveTo "
+              "stage, not assumed as silent initial state)",
+              maxJointError(actual, home), already_at_home ? "YES" : "NO");
+
+  moveit::task_constructor::Task gen_task("", false);
+  gen_task.setName("FR3 Step12C Prefix");
+  gen_task.loadRobotModel(node);
+  const auto robot_model = gen_task.getRobotModel();
+  auto* jmg_home = robot_model->getJointModelGroup(group);
+  CollisionDiagConfig home_dcfg;
+  home_dcfg.object_id = object_id;
+  home_dcfg.table_name = table_name;
+  home_dcfg.column_name = column_name;
+  home_dcfg.touch_links = touch_links;
+  auto home_scene = fetchPlanningScene(node, robot_model);
+  if (!home_scene)
   {
-    RCLCPP_ERROR(node->get_logger(), "Not at Stage4 Home");
+    RCLCPP_ERROR(node->get_logger(), "NEW_HOME_INVALID: failed to fetch planning scene");
+    shutdownSpinner(executor, spinner);
+    return 2;
+  }
+  applyJointsToScene(*home_scene, home);
+  bool home_limits_ok = jmg_home && home_scene->getCurrentState().satisfiesBounds(jmg_home);
+  auto home_contacts = collectCollisionContacts(*home_scene, home_dcfg);
+  bool home_self_ok = true;
+  bool home_table_ok = true;
+  bool home_column_ok = true;
+  std::string home_pair = "none";
+  for (const auto& c : home_contacts.contacts)
+  {
+    if (c.category == CollisionCategory::ROBOT_SELF)
+    {
+      home_self_ok = false;
+    }
+    if (c.category == CollisionCategory::ROBOT_TABLE)
+    {
+      home_table_ok = false;
+    }
+    if (c.category == CollisionCategory::ROBOT_COLUMN)
+    {
+      home_column_ok = false;
+    }
+    if (home_pair == "none")
+    {
+      home_pair = c.pair_key;
+    }
+  }
+  const bool home_collision_free = !home_contacts.collision;
+  RCLCPP_INFO(node->get_logger(),
+              "NEW HOME validation limits=%s self=%s table=%s column=%s collision_free=%s pair=%s",
+              home_limits_ok ? "PASS" : "FAIL", home_self_ok ? "PASS" : "FAIL",
+              home_table_ok ? "PASS" : "FAIL", home_column_ok ? "PASS" : "FAIL",
+              home_collision_free ? "PASS" : "FAIL", home_pair.c_str());
+  if (!home_limits_ok || !home_collision_free)
+  {
+    failure_class = "NEW_HOME_INVALID";
+    RCLCPP_ERROR(node->get_logger(), "NEW_HOME_INVALID pair=%s limits=%d collision=%d",
+                 home_pair.c_str(), home_limits_ok, home_contacts.collision);
+    std::ofstream yaml(diag_path);
+    yaml << "status: FAIL\nfailure_classification: NEW_HOME_INVALID\n";
+    yaml << "home_limits_ok: " << (home_limits_ok ? "true" : "false") << "\n";
+    yaml << "home_self_ok: " << (home_self_ok ? "true" : "false") << "\n";
+    yaml << "home_table_ok: " << (home_table_ok ? "true" : "false") << "\n";
+    yaml << "home_column_ok: " << (home_column_ok ? "true" : "false") << "\n";
+    yaml << "home_pair: " << home_pair << "\n";
+    yaml << "home_deg: " << formatHomeList(home_deg) << "\n";
+    yaml << "home_rad: " << formatHomeList(home) << "\n";
     shutdownSpinner(executor, spinner);
     return 2;
   }
 
-  moveit::task_constructor::Task gen_task("", false);
-  gen_task.setName("FR3 Step12 Prefix");
-  gen_task.loadRobotModel(node);
-  const auto robot_model = gen_task.getRobotModel();
   geometry_msgs::msg::PoseStamped object_scene = object_world;
   if (robot_model->getModelFrame() != object_world.header.frame_id)
   {
@@ -1144,7 +1456,8 @@ int main(int argc, char** argv)
     task.setName("FR3 Step12 Prefix");
     task.loadRobotModel(node);
     addPrefixStages(task, node, group, ee_link, attach_link, object_id, table_name, touch_links,
-                    object_scene, pregrasp, grasp, lift, object_height, object_radius, planning_time);
+                    object_scene, pregrasp, grasp, lift, object_height, object_radius, planning_time,
+                    home);
     try
     {
       task.init();
@@ -1172,6 +1485,21 @@ int main(int argc, char** argv)
     prefix_time = trajectoryDuration(msg);
     prefix_path = pathLengthMsg(msg);
     prefix_ok = true;
+    std::vector<const moveit::task_constructor::SolutionBase*> home_leaves;
+    flattenSolutions(*task.solutions().front(), home_leaves);
+    const auto* home_sol = findStageSolution(home_leaves, "MoveTo Home");
+    if (home_sol && home_sol->end() && home_sol->end()->scene())
+    {
+      const auto home_reached =
+          jointsFromState(home_sol->end()->scene()->getCurrentState());
+      RCLCPP_INFO(node->get_logger(),
+                  "MTC MoveTo Home reached max|dq|=%.6f rad vs commanded HOME_RAD",
+                  maxJointError(home_reached, home));
+    }
+    else
+    {
+      RCLCPP_WARN(node->get_logger(), "MoveTo Home stage missing from prefix solution");
+    }
     RCLCPP_INFO(node->get_logger(), "PREFIX SUCCESS attempt=%d T=%.3f L=%.3f", attempt, prefix_time,
                 prefix_path);
     break;
@@ -1320,12 +1648,12 @@ int main(int argc, char** argv)
 
   ViewLayerCounts a_counts, b_counts, c_counts;
   std::vector<ScoredEndpoint> a_kept, b_kept, c_kept;
-  viz.hud = "GENERATING A/B/C ENDPOINTS @ P1.z=1.20";
+  viz.hud = "GENERATING A/B/C(bottom) ENDPOINTS @ P1=[0,0.30,1.20]";
   evaluate_view(view_a, a_counts, a_kept, "A side_pos_y");
   viz.a_status = a_kept.empty() ? "NO ENDPOINT" : (std::to_string(a_kept.size()) + " vis+free");
   evaluate_view(view_b, b_counts, b_kept, "B side_neg_y");
   viz.b_status = b_kept.empty() ? "NO ENDPOINT" : (std::to_string(b_kept.size()) + " vis+free");
-  evaluate_view(view_c, c_counts, c_kept, "C top_circle");
+  evaluate_view(view_c, c_counts, c_kept, "C bottom_circle ORIGINAL BOTTOM");
   viz.c_status = c_kept.empty() ? "NO ENDPOINT" : (std::to_string(c_kept.size()) + " vis+free");
   viz.publish(node, true);
 
@@ -1339,8 +1667,16 @@ int main(int argc, char** argv)
     yaml << "p1: [" << p1.x() << ", " << p1.y() << ", " << p1.z() << "]\n";
     yaml << "camera_design_position: [" << camera.optical_center_world.x() << ", "
          << camera.optical_center_world.y() << ", " << camera.optical_center_world.z() << "]\n";
-    yaml << "camera_forward: [0, 1, 0]\n";
-    yaml << "order: A,B,C\n";
+    yaml << "camera_forward: " << vecYaml(camera.optical_forward_world) << "\n";
+    yaml << "order: A,B,C(bottom_circle)\n";
+    yaml << "arm1_c_semantic: bottom_circle\n";
+    yaml << "arm1_c_physical: original_table_contact_bottom\n";
+    yaml << "arm1_c_local_normal: [0.0, 0.0, -1.0]\n";
+    yaml << "arm1_c_surface_local_center: [0.0, 0.0, " << view_c.center_in_object.z() << "]\n";
+    yaml << "arm2_future_face: top_circle\n";
+    yaml << "arm2_future_local_normal: [0.0, 0.0, 1.0]\n";
+    yaml << "old_wrong_c: object_+Z_original_top\n";
+    yaml << "old_wrong_c_visibility_valid: 0\n";
     yaml << "roll_step_deg: " << getDouble(node, "roll_step_deg") << "\n";
     yaml << "top_k: " << top_k << "\n";
     yaml << "beam_width: " << beam_width << "\n";
@@ -1384,17 +1720,62 @@ int main(int argc, char** argv)
     }
   };
 
+  if (c_counts.raw_ik == 0)
+  {
+    failure_class = "BOTTOM_FACE_IK_UNREACHABLE";
+    RCLCPP_ERROR(node->get_logger(),
+                 "BOTTOM_FACE_IK_UNREACHABLE rolls=%d ori=%d rawIK=0 collision-free=0 vis=0 "
+                 "(geometry valid; IK never found; visibility not evaluated on a live state)",
+                 c_counts.roll_samples, c_counts.orientation_valid);
+    write_diag("FAIL", failure_class, nullptr);
+    viz.hud = "BOTTOM_FACE_IK_UNREACHABLE";
+    viz.c_status = "NO IK";
+    viz.publish(node, true);
+    if (vis_hold > 0)
+    {
+      std::this_thread::sleep_for(std::chrono::duration<double>(vis_hold));
+    }
+    shutdownSpinner(executor, spinner);
+    return 4;
+  }
+  if (c_counts.collision_free > 0 && c_counts.visibility_valid == 0)
+  {
+    failure_class = "C_BOTTOM_VISIBILITY_BLOCKED";
+    RCLCPP_ERROR(node->get_logger(),
+                 "C_BOTTOM_VISIBILITY_BLOCKED rolls=%d rawIK=%d collision-free=%d vis=0 "
+                 "center-block=%d frac-block=%d occ=%s",
+                 c_counts.roll_samples, c_counts.raw_ik, c_counts.collision_free,
+                 c_counts.vis_center_blocked, c_counts.vis_fraction_blocked,
+                 c_counts.vis_occluders.c_str());
+    write_diag("FAIL", failure_class, nullptr);
+    viz.hud = "C_BOTTOM_VISIBILITY_BLOCKED";
+    viz.c_status = "VISIBILITY BLOCKED";
+    viz.publish(node, true);
+    if (vis_hold > 0)
+    {
+      std::this_thread::sleep_for(std::chrono::duration<double>(vis_hold));
+    }
+    shutdownSpinner(executor, spinner);
+    return 4;
+  }
   if (c_counts.collision_free == 0)
   {
-    failure_class = "C_COLLISION_BLOCKED_AT_FIXED_H_1_20";
+    failure_class = "ROBOT_COLUMN_COLLISION";
+    if (c_counts.dominant_pair.find("table") != std::string::npos)
+    {
+      failure_class = "TABLE_COLLISION";
+    }
+    else if (c_counts.dominant_pair.find(column_name) == std::string::npos)
+    {
+      failure_class = "SELF_COLLISION";
+    }
     RCLCPP_ERROR(node->get_logger(),
-                 "C_COLLISION_BLOCKED_AT_FIXED_H_1_20 rolls=%d rawIK=%d vis=%d free=0 pair=%s "
-                 "best_signed=%.4f",
-                 c_counts.roll_samples, c_counts.raw_ik, c_counts.visibility_valid,
-                 c_counts.dominant_pair.c_str(),
+                 "%s rolls=%d rawIK=%d vis=%d free=0 pair=%s best_signed=%.4f",
+                 failure_class.c_str(), c_counts.roll_samples, c_counts.raw_ik,
+                 c_counts.visibility_valid, c_counts.dominant_pair.c_str(),
                  c_counts.distance_available ? c_counts.best_column_distance : NAN);
     write_diag("FAIL", failure_class, nullptr);
-    viz.hud = "C_COLLISION_BLOCKED_AT_FIXED_H_1_20";
+    viz.hud = failure_class;
     viz.publish(node, true);
     if (vis_hold > 0)
     {
@@ -1405,17 +1786,51 @@ int main(int argc, char** argv)
   }
   if (a_kept.empty() || b_kept.empty() || c_kept.empty())
   {
-    if (a_counts.raw_ik == 0 || b_counts.raw_ik == 0 || c_counts.raw_ik == 0)
+    auto classify_empty = [&](const char* view_label, const ViewLayerCounts& c,
+                              const char* vis_class) {
+      RCLCPP_ERROR(node->get_logger(),
+                   "%s EMPTY endpoints: rolls=%d ori=%d rawIK=%d joint=%d collision-free=%d vis=%d "
+                   "center-block=%d frac-block=%d pair=%s occ=%s",
+                   view_label, c.roll_samples, c.orientation_valid, c.raw_ik, c.joint_valid,
+                   c.collision_free, c.visibility_valid, c.vis_center_blocked,
+                   c.vis_fraction_blocked, c.dominant_pair.c_str(), c.vis_occluders.c_str());
+      if (c.orientation_valid == 0)
+      {
+        return std::string("GEOMETRY_INVALID");
+      }
+      if (c.raw_ik == 0)
+      {
+        return std::string("IK_UNREACHABLE");
+      }
+      if (c.collision_free == 0)
+      {
+        if (c.dominant_pair.find("table") != std::string::npos)
+        {
+          return std::string("TABLE_COLLISION");
+        }
+        if (c.dominant_pair.find(column_name) != std::string::npos)
+        {
+          return std::string("ROBOT_COLUMN_COLLISION");
+        }
+        return std::string("SELF_COLLISION");
+      }
+      if (c.visibility_valid == 0)
+      {
+        return std::string(vis_class);
+      }
+      return std::string("SEARCH_BUDGET_EXHAUSTED");
+    };
+    if (a_kept.empty())
     {
-      failure_class = "IK_UNREACHABLE";
+      failure_class = classify_empty("A", a_counts, "A_VISIBILITY_BLOCKED");
     }
-    else if (a_counts.collision_free == 0 || b_counts.collision_free == 0)
+    else if (b_kept.empty())
     {
-      failure_class = "ROBOT_COLUMN_COLLISION";
+      failure_class = classify_empty("B", b_counts, "B_VISIBILITY_BLOCKED");
     }
     else
     {
-      failure_class = "VISIBILITY_BLOCKED";
+      failure_class = classify_empty("C", c_counts, "C_BOTTOM_VISIBILITY_BLOCKED");
     }
     write_diag("FAIL", failure_class, nullptr);
     shutdownSpinner(executor, spinner);
@@ -1457,7 +1872,7 @@ int main(int argc, char** argv)
   }
   if (beam.empty())
   {
-    failure_class = "A_TRANSITION_FAILED";
+    failure_class = "LIFT_TO_A_FAILED";
     write_diag("FAIL", failure_class, nullptr);
     shutdownSpinner(executor, spinner);
     return 4;
@@ -1560,7 +1975,8 @@ int main(int argc, char** argv)
     task.setName("FR3 Step12 Winner ABC");
     task.loadRobotModel(node);
     addPrefixStages(task, node, group, ee_link, attach_link, object_id, table_name, touch_links,
-                    object_scene, pregrasp, grasp, lift, object_height, object_radius, planning_time);
+                    object_scene, pregrasp, grasp, lift, object_height, object_radius, planning_time,
+                    home);
     auto ompl =
         std::make_shared<moveit::task_constructor::solvers::PipelinePlanner>(node, kOmplPipeline);
     ompl->setTimeout(planning_time);
@@ -1627,17 +2043,54 @@ int main(int argc, char** argv)
     yaml.precision(9);
     yaml << "label: BEST SAMPLED FEASIBLE COMPLETE TASK WITHIN CONFIGURED SEARCH BUDGET\n";
     yaml << "not_global_optimum: true\n";
-    yaml << "p1: [0.0, 0.4, 1.2]\n";
-    yaml << "camera_design_position: [" << camera.optical_center_world.x() << ", "
-         << camera.optical_center_world.y() << ", " << camera.optical_center_world.z() << "]\n";
-    yaml << "camera_forward: [0.0, 1.0, 0.0]\n";
+    yaml << "task_version: STEP12C\n";
+    yaml << "home_joints_deg: " << formatHomeList(home_deg) << "\n";
+    yaml << "home_joints_rad: " << formatHomeList(home) << "\n";
+    yaml << "mtc_used_home: true\n";
+    yaml << "current_already_at_home: " << (already_at_home ? "true" : "false") << "\n";
+    yaml << "p1: " << vecYaml(p1) << "\n";
+    yaml << "camera_position: " << vecYaml(camera.optical_center_world) << "\n";
+    yaml << "camera_rpy: [-2.35619449, 0.0, 0.0]\n";
+    yaml << "camera_forward: " << vecYaml(camera.optical_forward_world) << "\n";
+    yaml << "surface_canonical_rpy: [0.785398, 0.0, 0.0]\n";
+    yaml << "surface_target_normal: " << vecYaml(d1) << "\n";
     yaml << "camera_calibrated: false\n";
-    yaml << "order: [side_pos_y, side_neg_y, top_circle]\n";
+    yaml << "order: [side_pos_y, side_neg_y, bottom_circle]\n";
+    yaml << "arm1_c_physical: original_table_contact_bottom\n";
+    yaml << "arm1_c_local_normal: [0.0, 0.0, -1.0]\n";
+    yaml << "arm2_future_face: top_circle\n";
     yaml << "pregrasp_m: 0.08\n";
     yaml << "lift_m: 0.08\n";
+    yaml << "t_tcp_object_translation: [0.0, 0.0, 0.0]\n";
     yaml << "t_tcp_object_xyzw: [" << tcp_object.pose.orientation.x << ", "
          << tcp_object.pose.orientation.y << ", " << tcp_object.pose.orientation.z << ", "
          << tcp_object.pose.orientation.w << "]\n";
+    {
+      const Eigen::Isometry3d a_obj = t_world_base * poseToIso(winner.a->cand.object_target.pose);
+      const Eigen::Isometry3d b_obj = t_world_base * poseToIso(winner.b->cand.object_target.pose);
+      const Eigen::Isometry3d c_obj = t_world_base * poseToIso(winner.c->cand.object_target.pose);
+      const Eigen::Isometry3d a_tcp = t_world_base * poseToIso(winner.a->cand.tcp_target.pose);
+      const Eigen::Isometry3d b_tcp = t_world_base * poseToIso(winner.b->cand.tcp_target.pose);
+      const Eigen::Isometry3d c_tcp = t_world_base * poseToIso(winner.c->cand.tcp_target.pose);
+      yaml << "A:\n";
+      yaml << "  roll_deg: " << winner.a->cand.roll_deg << "\n";
+      yaml << "  joints_rad: " << jointsYaml(winner.a->cand.joints) << "\n";
+      yaml << "  joints_deg: " << jointsDegYaml(winner.a->cand.joints) << "\n";
+      yaml << "  tcp_world: " << isoPoseYaml(a_tcp) << "\n";
+      yaml << "  object_world: " << isoPoseYaml(a_obj) << "\n";
+      yaml << "B:\n";
+      yaml << "  roll_deg: " << winner.b->cand.roll_deg << "\n";
+      yaml << "  joints_rad: " << jointsYaml(winner.b->cand.joints) << "\n";
+      yaml << "  joints_deg: " << jointsDegYaml(winner.b->cand.joints) << "\n";
+      yaml << "  tcp_world: " << isoPoseYaml(b_tcp) << "\n";
+      yaml << "  object_world: " << isoPoseYaml(b_obj) << "\n";
+      yaml << "C_bottom:\n";
+      yaml << "  roll_deg: " << winner.c->cand.roll_deg << "\n";
+      yaml << "  joints_rad: " << jointsYaml(winner.c->cand.joints) << "\n";
+      yaml << "  joints_deg: " << jointsDegYaml(winner.c->cand.joints) << "\n";
+      yaml << "  tcp_world: " << isoPoseYaml(c_tcp) << "\n";
+      yaml << "  object_world: " << isoPoseYaml(c_obj) << "\n";
+    }
     yaml << "a_roll_deg: " << winner.a->cand.roll_deg << "\n";
     yaml << "b_roll_deg: " << winner.b->cand.roll_deg << "\n";
     yaml << "c_roll_deg: " << winner.c->cand.roll_deg << "\n";
@@ -1655,12 +2108,13 @@ int main(int argc, char** argv)
     yaml << "a_to_b_time: " << winner.a_b.best_time << "\n";
     yaml << "b_to_c_time: " << winner.b_c.best_time << "\n";
     yaml << "segments:\n";
+    yaml << "  - name: Current_to_Home\n";
     yaml << "  - name: Home_to_PreGrasp\n";
     yaml << "  - name: PreGrasp_to_Grasp\n";
     yaml << "  - name: Grasp_Attach_Lift\n";
     yaml << "  - name: Lift_to_A\n";
     yaml << "  - name: A_to_B\n";
-    yaml << "  - name: B_to_C\n";
+    yaml << "  - name: B_to_C_original_bottom\n";
     yaml << "roll_step_deg: " << getDouble(node, "roll_step_deg") << "\n";
     yaml << "top_k: " << top_k << "\n";
     yaml << "beam_width: " << beam_width << "\n";
@@ -1675,10 +2129,10 @@ int main(int argc, char** argv)
               "WINNER A r=%.1f B r=%.1f C r=%.1f T=%.3f L=%.3f clearance=%.4f file=%s",
               winner.a->cand.roll_deg, winner.b->cand.roll_deg, winner.c->cand.roll_deg, winner.time,
               winner.path, winner.min_clearance, winner_path.c_str());
-  viz.hud = "BEST SAMPLED FEASIBLE COMPLETE TASK\nHome→A→B→C PLAYBACK (RViz only)";
-  viz.a_status = "VISIBLE";
-  viz.b_status = "VISIBLE";
-  viz.c_status = "VISIBLE";
+  viz.hud = "BEST SAMPLED FEASIBLE COMPLETE TASK\nCurrent→Home→A→B→C(original bottom) PLAYBACK (RViz only)";
+  viz.a_status = "VISIBLE +Y SIDE";
+  viz.b_status = "VISIBLE -Y SIDE";
+  viz.c_status = "VISIBLE ORIGINAL BOTTOM object -Z";
   viz.publish(node, true);
   if (vis_hold > 0)
   {

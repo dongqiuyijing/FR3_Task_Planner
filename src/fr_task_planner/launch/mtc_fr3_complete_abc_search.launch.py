@@ -23,20 +23,26 @@ if _LAUNCH_DIR not in sys.path:
     sys.path.insert(0, _LAUNCH_DIR)
 
 from inspection_view_geometry import (  # noqa: E402
+    STEP12C_CAMERA_POSITION,
+    STEP12C_CAMERA_RPY,
+    STEP12C_HOME_DEG,
+    STEP12C_P1,
+    STEP12C_SURFACE_RPY,
+    apply_step12c_tilted_geometry,
+    camera_optical_axes_from_rpy,
     cpp_inspection_vectors,
     generate_roll_candidates,
     load_stage6_geometry,
     pose_in_planning_frame,
-    retarget_inspection_p1,
+    surface_frame_from_rpy,
 )
 from stage4_pregrasp import _pose_to_dict, compute_stage4_pregrasp_params  # noqa: E402
 
 
 _ROS_DOMAIN_ID = "77"
-_VIEWS = ("side_pos_y", "side_neg_y", "top_circle")
-# User-fixed for STEP 12. Do not search. Do not write stage4_config.yaml.
-_FIXED_P1_Z = 1.20
-_CAMERA_DESIGN = (0.0, 0.10, 1.20)
+# ARM1 complete-task views. C is the original table-contact bottom, not +Z top.
+_ARM1_VIEWS = ("side_pos_y", "side_neg_y", "bottom_circle")
+_ALL_FACE_VIEWS = ("side_pos_y", "side_neg_y", "bottom_circle", "top_circle")
 
 
 def _flatten_rolls(geo, roll_step_deg: float, planning_frame: str) -> dict:
@@ -45,7 +51,7 @@ def _flatten_rolls(geo, roll_step_deg: float, planning_frame: str) -> dict:
     indexes = []
     obj = {key: [] for key in ("x", "y", "z", "qx", "qy", "qz", "qw")}
     tcp = {key: [] for key in ("x", "y", "z", "qx", "qy", "qz", "qw")}
-    for name in _VIEWS:
+    for name in _ARM1_VIEWS:
         for cand in generate_roll_candidates(
             geo["targets"][name], geo["tcp_t_object"], roll_step_deg
         ):
@@ -119,10 +125,17 @@ def _launch_nodes(context, *args, **kwargs):
     config_file = LaunchConfiguration("config_file").perform(context)
     roll_step_deg = float(LaunchConfiguration("roll_step_deg").perform(context))
     params = compute_stage4_pregrasp_params(config_file or None)
-    geo = retarget_inspection_p1(
-        load_stage6_geometry(config_file or None),
-        (0.0, 0.4, _FIXED_P1_Z),
-    )
+    geo = apply_step12c_tilted_geometry(load_stage6_geometry(config_file or None))
+    cam_forward, _, cam_y_down = camera_optical_axes_from_rpy(STEP12C_CAMERA_RPY)
+    _, surface_up, n_target = surface_frame_from_rpy(STEP12C_SURFACE_RPY)
+    home_rad = [
+        params[f"home_{name}"]
+        for name in ("j1", "j2", "j3", "j4", "j5", "j6")
+    ]
+    home_deg = [
+        params[f"home_{name}_deg"]
+        for name in ("j1", "j2", "j3", "j4", "j5", "j6")
+    ]
     params["roll_step_deg"] = roll_step_deg
     params["max_ik_solutions_per_pose"] = int(
         LaunchConfiguration("max_ik_solutions_per_pose").perform(context)
@@ -150,13 +163,26 @@ def _launch_nodes(context, *args, **kwargs):
         context
     )
     params["winner_output_path"] = LaunchConfiguration("winner_output_path").perform(context)
-    params["camera_design_x"] = _CAMERA_DESIGN[0]
-    params["camera_design_y"] = _CAMERA_DESIGN[1]
-    params["camera_design_z"] = _CAMERA_DESIGN[2]
+    params["camera_design_x"] = STEP12C_CAMERA_POSITION[0]
+    params["camera_design_y"] = STEP12C_CAMERA_POSITION[1]
+    params["camera_design_z"] = STEP12C_CAMERA_POSITION[2]
+    params["camera_rpy_roll"] = STEP12C_CAMERA_RPY[0]
+    params["camera_rpy_pitch"] = STEP12C_CAMERA_RPY[1]
+    params["camera_rpy_yaw"] = STEP12C_CAMERA_RPY[2]
+    params["camera_forward_x"] = float(cam_forward[0])
+    params["camera_forward_y"] = float(cam_forward[1])
+    params["camera_forward_z"] = float(cam_forward[2])
+    params["camera_y_down_x"] = float(cam_y_down[0])
+    params["camera_y_down_y"] = float(cam_y_down[1])
+    params["camera_y_down_z"] = float(cam_y_down[2])
+    params["surface_rpy_roll"] = STEP12C_SURFACE_RPY[0]
+    params["surface_rpy_pitch"] = STEP12C_SURFACE_RPY[1]
+    params["surface_rpy_yaw"] = STEP12C_SURFACE_RPY[2]
+    params["task_version"] = "STEP12C"
     params.update(_env_bounds(config_file))
     params.update(cpp_inspection_vectors(geo))
     planning_frame = str(params.get("planning_frame", "base_link"))
-    for name in _VIEWS:
+    for name in _ALL_FACE_VIEWS:
         view = geo["targets"][name].view
         params[f"{name}_center_x"] = float(view.center_in_object[0])
         params[f"{name}_center_y"] = float(view.center_in_object[1])
@@ -223,12 +249,24 @@ def _launch_nodes(context, *args, **kwargs):
         LogInfo(
             msg="\n".join(
                 [
-                    "========== STEP 12 FIXED ABC COMPLETE-TASK SEARCH ==========",
+                    "========== STEP 12C TILTED-CAMERA FIXED-ABC SEARCH ==========",
                     f"ROS_DOMAIN_ID={_ROS_DOMAIN_ID}",
                     "PLAN / RViz ONLY. No Gazebo execute. No real robot.",
-                    "P1 fixed: [0.0, 0.4, 1.20]  (YAML z not rewritten)",
-                    "camera design: [0.0, 0.10, 1.20] forward +Y  (NOT calibrated)",
-                    "order: A → B → C",
+                    f"HOME_DEG: {list(home_deg)}",
+                    f"HOME_RAD: {list(home_rad)}",
+                    "requested HOME_DEG: " + str(list(STEP12C_HOME_DEG)),
+                    f"P1 fixed: {list(STEP12C_P1)}  (YAML inspection not rewritten)",
+                    f"camera position: {list(STEP12C_CAMERA_POSITION)}",
+                    f"camera RPY: {list(STEP12C_CAMERA_RPY)}",
+                    f"camera forward: {list(cam_forward)}",
+                    f"surface RPY: {list(STEP12C_SURFACE_RPY)}",
+                    f"n_target: {list(n_target)}",
+                    f"surface up: {list(surface_up)}",
+                    "ARM1 A = side_pos_y  object +Y",
+                    "ARM1 B = side_neg_y  object -Y",
+                    "ARM1 C = bottom_circle  object -Z ORIGINAL TABLE-CONTACT FACE",
+                    "ARM2 future = top_circle  object +Z  (not planned)",
+                    "order: Current → Home → PreGrasp → Grasp → Attach → Lift → A → B → C(bottom)",
                     f"roll step: {roll_step_deg} deg",
                     f"visualize_search: {visualize}",
                 ]
@@ -254,7 +292,10 @@ def generate_launch_description():
     )
     control_share = get_package_share_directory("fr_control")
     default_winner = os.path.expanduser(
-        "~/fr_task_ws/src/fr_task_planner/config/step12_best_sampled_complete_task.yaml"
+        "~/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_winner.yaml"
+    )
+    default_diag = os.path.expanduser(
+        "~/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_diagnostics.yaml"
     )
     return LaunchDescription(
         [
@@ -278,7 +319,7 @@ def generate_launch_description():
             DeclareLaunchArgument("search_planning_time", default_value="3.0"),
             DeclareLaunchArgument(
                 "diagnostic_output_path",
-                default_value="/tmp/fr3_step12_search.yaml",
+                default_value=default_diag,
             ),
             DeclareLaunchArgument("winner_output_path", default_value=default_winner),
             IncludeLaunchDescription(

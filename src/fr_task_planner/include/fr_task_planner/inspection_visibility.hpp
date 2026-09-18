@@ -50,9 +50,10 @@ inline std::string cameraModelClass(const CameraModel& model)
 
 struct DesignCamera
 {
-  Eigen::Vector3d optical_center_world = Eigen::Vector3d(0.0, 0.10, 1.20);
-  Eigen::Vector3d optical_forward_world = Eigen::Vector3d::UnitY();
-  Eigen::Vector3d image_up_world = Eigen::Vector3d::UnitZ();
+  // STEP12C tilted D405 design pose. Optical +Z = forward.
+  Eigen::Vector3d optical_center_world = Eigen::Vector3d(0.0, 0.0, 1.40);
+  Eigen::Vector3d optical_forward_world = Eigen::Vector3d(0.0, 0.70710678, -0.70710678);
+  Eigen::Vector3d image_up_world = Eigen::Vector3d(0.0, 0.70710678, 0.70710678);
 };
 
 inline DesignCamera fixedInspectionDesignCamera()
@@ -103,9 +104,13 @@ struct GeometricVisibilityResult
 
 CameraModel loadCameraModelFromWorkspace();
 SurfaceRoiDef topCircleRoiDef();
+SurfaceRoiDef bottomCircleRoiDef();
 SurfaceRoiDef sideViewRoiDef(const std::string& view_name, const std::string& local_normal);
+bool isCircularCapView(const std::string& view_name);
 std::vector<Eigen::Vector3d> sampleTopCircleDisk(const Eigen::Vector3d& center,
                                                  const Eigen::Vector3d& normal, double radius);
+std::vector<Eigen::Vector3d> sampleCircularCapInObject(const Eigen::Isometry3d& t_world_object,
+                                                       double z_local, double radius);
 std::vector<Eigen::Vector3d> sampleSideHalfCylinder(const Eigen::Isometry3d& t_world_object,
                                                     const Eigen::Vector3d& local_normal,
                                                     double radius, double height);

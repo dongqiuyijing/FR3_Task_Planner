@@ -1,0 +1,72 @@
+label: BEST SAMPLED FEASIBLE COMPLETE TASK WITHIN CONFIGURED SEARCH BUDGET
+not_global_optimum: true
+task_version: STEP12C
+home_joints_deg: [-130.142302560334, -94.129118966584, -107.122137995049, -164.505796526918, -0.193402885210, 48.122727800124]
+home_joints_rad: [-2.271411675804, -1.642863047968, -1.869634009789, -2.871167788011, -0.003375517130, 0.839900045153]
+mtc_used_home: true
+current_already_at_home: true
+p1: [0.000000000, 0.300000000, 1.200000000]
+camera_position: [0.000000000, 0.000000000, 1.400000000]
+camera_rpy: [-2.35619449, 0.0, 0.0]
+camera_forward: [0.000000000, 0.707106781, -0.707106781]
+surface_canonical_rpy: [0.785398, 0.0, 0.0]
+surface_target_normal: [0.000000000, -0.707106666, 0.707106897]
+camera_calibrated: false
+order: [side_pos_y, side_neg_y, bottom_circle]
+arm1_c_physical: original_table_contact_bottom
+arm1_c_local_normal: [0.0, 0.0, -1.0]
+arm2_future_face: top_circle
+pregrasp_m: 0.08
+lift_m: 0.08
+t_tcp_object_translation: [0.0, 0.0, 0.0]
+t_tcp_object_xyzw: [-1.000000000, 0.000000000, 0.000000000, 0.000000000]
+A:
+  roll_deg: -90.000000000
+  joints_rad: [0.761386084, -0.642747728, 1.360379768, 0.853167960, 1.570792654, -0.024008243]
+  joints_deg: [43.624, -36.827, 77.944, 48.883, 90.000, -1.376]
+  tcp_world: {xyz: [-0.000000000, 0.305303300, 1.194696698], xyzw: [-0.270598103, -0.653281460, 0.270598103, 0.653281460]}
+  object_world: {xyz: [-0.000000000, 0.305303300, 1.194696698], xyzw: [0.653281460, 0.270598103, 0.653281460, 0.270598103]}
+B:
+  roll_deg: -130.000000000
+  joints_rad: [0.128839903, -0.765711154, 2.071148432, 0.157964462, 0.879595649, 2.523736939]
+  joints_deg: [7.382, -43.872, 118.668, 9.051, 50.397, 144.599]
+  tcp_world: {xyz: [-0.000000000, 0.305303300, 1.194696698], xyzw: [-0.390448349, 0.346829043, 0.837319186, -0.161729039]}
+  object_world: {xyz: [-0.000000000, 0.305303300, 1.194696698], xyzw: [-0.161729039, 0.837319186, -0.346829043, 0.390448349]}
+C_bottom:
+  roll_deg: -85.000000000
+  joints_rad: [0.398510667, 0.059882338, 0.469679891, -0.529563111, -1.172285497, 2.443454499]
+  joints_deg: [22.833, 3.431, 26.911, -30.342, -67.167, 140.000]
+  tcp_world: {xyz: [-0.000000000, 0.312374367, 1.187625629], xyzw: [0.258537129, -0.282143766, 0.681155464, 0.624163986]}
+  object_world: {xyz: [-0.000000000, 0.312374367, 1.187625629], xyzw: [0.624163986, 0.681155464, 0.282143766, -0.258537129]}
+a_roll_deg: -90.000000000
+b_roll_deg: -130.000000000
+c_roll_deg: -85.000000000
+a_joints_rad: [0.761386084, -0.642747728, 1.360379768, 0.853167960, 1.570792654, -0.024008243]
+b_joints_rad: [0.128839903, -0.765711154, 2.071148432, 0.157964462, 0.879595649, 2.523736939]
+c_joints_rad: [0.398510667, 0.059882338, 0.469679891, -0.529563111, -1.172285497, 2.443454499]
+a_joints_deg: [43.624, -36.827, 77.944, 48.883, 90.000, -1.376]
+b_joints_deg: [7.382, -43.872, 118.668, 9.051, 50.397, 144.599]
+c_joints_deg: [22.833, 3.431, 26.911, -30.342, -67.167, 140.000]
+predicted_total_trajectory_time: 13.847580915
+total_joint_path_length: 14.505901660
+minimum_clearance: 0.074799999
+prefix_time: 5.457815815
+lift_to_a_time: 2.332655672
+a_to_b_time: 3.192272652
+b_to_c_time: 2.864836776
+segments:
+  - name: Current_to_Home
+  - name: Home_to_PreGrasp
+  - name: PreGrasp_to_Grasp
+  - name: Grasp_Attach_Lift
+  - name: Lift_to_A
+  - name: A_to_B
+  - name: B_to_C_original_bottom
+roll_step_deg: 5.000000000
+top_k: 10
+beam_width: 5
+edge_attempts: 3
+max_ik_solutions_per_pose: 8
+search_planning_time: 3.000000000
+complete_feasible_candidates: 40
+execution: false

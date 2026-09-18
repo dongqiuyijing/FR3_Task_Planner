@@ -73,10 +73,27 @@ SurfaceRoiDef topCircleRoiDef()
 {
   SurfaceRoiDef d;
   d.view = "top_circle";
-  d.physical = "object +Z circular end face, radius 7.5 mm, height offset 17.5 mm";
+  d.physical = "object +Z original upward top circular face, reserved for ARM2";
   d.bounded_roi_defined = true;
   d.radius_m = 0.0075;
   return d;
+}
+
+SurfaceRoiDef bottomCircleRoiDef()
+{
+  SurfaceRoiDef d;
+  d.view = "bottom_circle";
+  d.physical =
+      "object -Z original table-contact bottom circular face, inspected by ARM1, "
+      "z_local = -H/2";
+  d.bounded_roi_defined = true;
+  d.radius_m = 0.0075;
+  return d;
+}
+
+bool isCircularCapView(const std::string& view_name)
+{
+  return view_name == "top_circle" || view_name == "bottom_circle";
 }
 
 SurfaceRoiDef sideViewRoiDef(const std::string& view_name, const std::string& local_normal)
@@ -108,6 +125,26 @@ std::vector<Eigen::Vector3d> sampleTopCircleDisk(const Eigen::Vector3d& center,
     {
       const double ang = 2.0 * kPi * static_cast<double>(k) / static_cast<double>(n_ang[r]);
       pts.push_back(center + rad * (std::cos(ang) * u + std::sin(ang) * v));
+    }
+  }
+  return pts;
+}
+
+std::vector<Eigen::Vector3d> sampleCircularCapInObject(const Eigen::Isometry3d& t_world_object,
+                                                       double z_local, double radius)
+{
+  std::vector<Eigen::Vector3d> pts;
+  pts.push_back(t_world_object * Eigen::Vector3d(0.0, 0.0, z_local));
+  const double rings[] = {0.25, 0.50, 0.75, 0.95};
+  const int n_ang[] = {8, 8, 12, 16};
+  for (int r = 0; r < 4; ++r)
+  {
+    const double rad = rings[r] * radius;
+    for (int k = 0; k < n_ang[r]; ++k)
+    {
+      const double ang = 2.0 * kPi * static_cast<double>(k) / static_cast<double>(n_ang[r]);
+      const Eigen::Vector3d local(rad * std::cos(ang), rad * std::sin(ang), z_local);
+      pts.push_back(t_world_object * local);
     }
   }
   return pts;
@@ -173,9 +210,10 @@ GeometricVisibilityResult checkGeometricVisibility(
   out.center_err = (actual_center - p1).norm();
   out.normal_dot = actual_normal.dot(d1.normalized());
   out.orientation_valid = out.normal_dot > 0.9986 && out.center_err < 0.005;
-  if (view.name == "top_circle")
+  if (isCircularCapView(view.name))
   {
-    out.roi_world = sampleTopCircleDisk(p1, actual_normal, object_radius);
+    out.roi_world =
+        sampleCircularCapInObject(t_world_object, view.center_in_object.z(), object_radius);
   }
   else
   {
@@ -262,7 +300,7 @@ GeometricVisibilityResult checkGeometricVisibility(
       out.roi_samples > 0 ? static_cast<double>(out.visible_samples) / out.roi_samples : 0.0;
   const bool center_ok = !out.ray_visible.empty() && out.ray_visible.front();
   out.center_ray_clear = center_ok;
-  const double min_frac = (view.name == "top_circle") ? kDiskMinVisible : kSideMinVisible;
+  const double min_frac = isCircularCapView(view.name) ? kDiskMinVisible : kSideMinVisible;
   // Occlusion only. Pose geometry is already gated by the IK validator.
   out.geometric_face_visible = center_ok && out.visible_fraction >= min_frac;
   if (!center_ok)

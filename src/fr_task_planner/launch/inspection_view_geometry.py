@@ -56,6 +56,21 @@ _ANGLE_TOL_DEG = 1e-6
 _ORTHO_DOT_TOL = 1e-6
 _UNIT_NORM_TOL = 1e-9
 
+# STEP 12C user-fixed design. Launch-time override only; do not rewrite
+# stage4_config.yaml inspection/camera fields, and do not search these values.
+STEP12C_P1 = (0.0, 0.30, 1.20)
+STEP12C_CAMERA_POSITION = (0.0, 0.0, 1.40)
+STEP12C_CAMERA_RPY = (-2.35619449, 0.0, 0.0)
+STEP12C_SURFACE_RPY = (0.785398, 0.0, 0.0)
+STEP12C_HOME_DEG = (
+    -130.142302560334,
+    -94.12911896658416,
+    -107.1221379950495,
+    -164.5057965269183,
+    -0.19340288521039606,
+    48.12272780012376,
+)
+
 
 @dataclass(frozen=True)
 class InspectionView:
@@ -290,9 +305,11 @@ def view_name_from_normal(normal_in_object: Sequence[float]) -> str:
         )
     if normal[2] >= _CAP_Z_ABS_MIN:
         return "top_circle"
+    if normal[2] <= -_CAP_Z_ABS_MIN:
+        return "bottom_circle"
     raise InspectionViewError(
-        f"normal {normal} is not a required STEP 6 view "
-        "(side_pos_y, side_neg_y, top_circle)"
+        f"normal {normal} is not a required cylinder face "
+        "(side_pos_y, side_neg_y, top_circle, bottom_circle)"
     )
 
 
@@ -314,11 +331,76 @@ def required_cylinder_views(
             up_in_object=vec_normalize(up, "up_in_object"),
         )
     expected = {"side_pos_y", "side_neg_y", "top_circle"}
-    if set(views) != expected:
+    if not expected.issubset(set(views)):
         raise InspectionViewError(
-            f"required views must be {sorted(expected)}, got {sorted(views)}"
+            f"required views must include {sorted(expected)}, got {sorted(views)}"
         )
+    if "bottom_circle" in views and views["top_circle"].normal_in_object[2] <= 0.0:
+        raise InspectionViewError("top_circle must remain object +Z; do not swap with bottom")
     return views
+
+
+def make_bottom_circle_view(height: float) -> InspectionView:
+    """ARM1 original table-contact face: object -Z. Does not replace top_circle."""
+    normal = (0.0, 0.0, -1.0)
+    # Orthogonal to -Z. Canonical roll maps this up onto world +Z.
+    up = (0.0, 1.0, 0.0)
+    return InspectionView(
+        name="bottom_circle",
+        normal_in_object=normal,
+        center_in_object=cylinder_center_in_object(normal, 1.0, height),
+        up_in_object=up,
+    )
+
+
+def attach_bottom_circle_view(data: dict[str, Any]) -> dict[str, Any]:
+    """Add ARM1 C = original bottom without reinterpreting top_circle as -Z."""
+    views = dict(data["views"])
+    if "top_circle" not in views:
+        raise InspectionViewError("top_circle must be preserved for future ARM2")
+    top = views["top_circle"]
+    if top.normal_in_object[2] < _CAP_Z_ABS_MIN:
+        raise InspectionViewError(
+            f"top_circle must stay object +Z, got {top.normal_in_object}"
+        )
+    view = make_bottom_circle_view(float(data["height"]))
+    if abs(view.center_in_object[2] + 0.5 * float(data["height"])) > _CENTER_TOL_M:
+        raise InspectionViewError(
+            f"bottom_circle center {view.center_in_object} is not [0,0,-H/2]"
+        )
+    views["bottom_circle"] = view
+    targets = dict(data["targets"])
+    targets["bottom_circle"] = compute_view_target(
+        view,
+        p1=data["p1_world"],
+        frame=data["working_frame"],
+        inspection_direction=data["d1_world"],
+        inspection_up=data["up_world"],
+        tcp_t_object=data["tcp_t_object"],
+    )
+    out = dict(data)
+    out["views"] = views
+    out["targets"] = targets
+    out["arm1_views"] = ("side_pos_y", "side_neg_y", "bottom_circle")
+    out["arm2_future_view"] = "top_circle"
+    return out
+
+
+def sample_circular_cap_local(
+    z_local: float, radius: float
+) -> list[tuple[float, float, float]]:
+    """Object-frame disk samples on z = z_local. Matches C++ circular ROI rings."""
+    if radius <= 0.0:
+        raise InspectionViewError("circular ROI radius must be positive")
+    pts: list[tuple[float, float, float]] = [(0.0, 0.0, float(z_local))]
+    rings = (0.25, 0.50, 0.75, 0.95)
+    n_ang = (8, 8, 12, 16)
+    for ring, count in zip(rings, n_ang):
+        rad = ring * radius
+        for k in range(count):
+            ang = 2.0 * math.pi * float(k) / float(count)
+            pts.append((rad * math.cos(ang), rad * math.sin(ang), float(z_local)))
+    return pts
 
 
 def canonical_object_rotation(
@@ -668,6 +750,120 @@ def retarget_inspection_p1(data: dict[str, Any], p1_world: Sequence[float]) -> d
     return out
 
 
+def rpy_rotation_matrix(
+    roll: float, pitch: float, yaw: float
+) -> tuple[tuple[float, float, float], ...]:
+    """Standard ROS/URDF RPY: R = Rz(yaw) * Ry(pitch) * Rx(roll)."""
+    cr, sr = math.cos(float(roll)), math.sin(float(roll))
+    cp, sp = math.cos(float(pitch)), math.sin(float(pitch))
+    cy, sy = math.cos(float(yaw)), math.sin(float(yaw))
+    rx = ((1.0, 0.0, 0.0), (0.0, cr, -sr), (0.0, sr, cr))
+    ry = ((cp, 0.0, sp), (0.0, 1.0, 0.0), (-sp, 0.0, cp))
+    rz = ((cy, -sy, 0.0), (sy, cy, 0.0), (0.0, 0.0, 1.0))
+    return _matmul(rz, _matmul(ry, rx))
+
+
+def rotate_matrix_vec(
+    matrix: Sequence[Sequence[float]], vector: Sequence[float]
+) -> tuple[float, float, float]:
+    """Apply a 3x3 rotation matrix to a 3-vector."""
+    return (
+        float(matrix[0][0]) * float(vector[0])
+        + float(matrix[0][1]) * float(vector[1])
+        + float(matrix[0][2]) * float(vector[2]),
+        float(matrix[1][0]) * float(vector[0])
+        + float(matrix[1][1]) * float(vector[1])
+        + float(matrix[1][2]) * float(vector[2]),
+        float(matrix[2][0]) * float(vector[0])
+        + float(matrix[2][1]) * float(vector[1])
+        + float(matrix[2][2]) * float(vector[2]),
+    )
+
+
+def camera_optical_axes_from_rpy(
+    rpy: Sequence[float],
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    """Optical +Z forward, +X right, +Y down from world RPY."""
+    rot = rpy_rotation_matrix(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+    forward = vec_normalize(rotate_matrix_vec(rot, (0.0, 0.0, 1.0)), "camera forward")
+    x_right = vec_normalize(rotate_matrix_vec(rot, (1.0, 0.0, 0.0)), "camera +X")
+    y_down = vec_normalize(rotate_matrix_vec(rot, (0.0, 1.0, 0.0)), "camera +Y down")
+    return forward, x_right, y_down
+
+
+def surface_frame_from_rpy(
+    rpy: Sequence[float],
+) -> tuple[tuple[float, float, float], tuple[float, float, float], tuple[float, float, float]]:
+    """Surface frame: local +Z = outward normal, +X/+Y in plane."""
+    rot = rpy_rotation_matrix(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+    x_axis = vec_normalize(rotate_matrix_vec(rot, (1.0, 0.0, 0.0)), "surface +X")
+    y_axis = vec_normalize(rotate_matrix_vec(rot, (0.0, 1.0, 0.0)), "surface +Y")
+    z_axis = vec_normalize(rotate_matrix_vec(rot, (0.0, 0.0, 1.0)), "surface normal")
+    return x_axis, y_axis, z_axis
+
+
+def retarget_inspection_geometry(
+    data: dict[str, Any],
+    p1_world: Sequence[float],
+    d1_world: Sequence[float],
+    up_world: Sequence[float],
+) -> dict[str, Any]:
+    """Rebuild targets at a new P1 and canonical n_target. Does not write YAML."""
+    d1, up = require_unit_orthogonal(d1_world, up_world)
+    p1 = (float(p1_world[0]), float(p1_world[1]), float(p1_world[2]))
+    out = dict(data)
+    out["p1"] = p1
+    out["p1_world"] = p1
+    out["direction"] = d1
+    out["d1_world"] = d1
+    out["up"] = up
+    out["up_world"] = up
+    out["p1_base"] = express_point(
+        p1,
+        out["world_frame"],
+        out["base_frame"],
+        out["t_world_base"],
+        out["world_frame"],
+        out["base_frame"],
+    )
+    out["d1_base"] = express_vector(
+        d1,
+        out["world_frame"],
+        out["base_frame"],
+        out["t_world_base"],
+        out["world_frame"],
+        out["base_frame"],
+    )
+    out["up_base"] = express_vector(
+        up,
+        out["world_frame"],
+        out["base_frame"],
+        out["t_world_base"],
+        out["world_frame"],
+        out["base_frame"],
+    )
+    out["targets"] = {
+        name: compute_view_target(
+            view,
+            p1=p1,
+            frame=out["working_frame"],
+            inspection_direction=d1,
+            inspection_up=up,
+            tcp_t_object=out["tcp_t_object"],
+        )
+        for name, view in out["views"].items()
+    }
+    return out
+
+
+def apply_step12c_tilted_geometry(data: dict[str, Any]) -> dict[str, Any]:
+    """Fixed STEP12C P1 + tilted n_target + ARM1 bottom face. Camera is separate."""
+    _, up_axis, n_target = surface_frame_from_rpy(STEP12C_SURFACE_RPY)
+    return attach_bottom_circle_view(
+        retarget_inspection_geometry(data, STEP12C_P1, n_target, up_axis)
+    )
+
+
 def load_stage6_geometry(config_file: str | None = None) -> dict[str, Any]:
     """Load YAML and compute required inspection targets in world."""
     path = config_file or workcell_config_path()
@@ -780,14 +976,24 @@ def validate_stage6_geometry(data: dict[str, Any]) -> list[str]:
     except InspectionViewError as exc:
         failures.append(str(exc))
     targets: dict[str, InspectionViewTarget] = data["targets"]
-    if set(targets) != {"side_pos_y", "side_neg_y", "top_circle"}:
+    required = {"side_pos_y", "side_neg_y", "top_circle"}
+    if not required.issubset(set(targets)):
         failures.append(f"required view set mismatch: {sorted(targets)}")
+    if "top_circle" in data.get("views", {}):
+        top_n = data["views"]["top_circle"].normal_in_object
+        if top_n[2] < _CAP_Z_ABS_MIN:
+            failures.append(f"top_circle must remain object +Z, got {top_n}")
 
-    for name, expected in (
+    offset_checks: list[tuple[str, float]] = [
         ("side_pos_y", radius),
         ("side_neg_y", radius),
         ("top_circle", 0.5 * height),
-    ):
+    ]
+    if "bottom_circle" in targets:
+        offset_checks.append(("bottom_circle", 0.5 * height))
+    for name, expected in offset_checks:
+        if name not in targets:
+            continue
         target = targets[name]
         if abs(target.object_center_offset_m - expected) > _CENTER_TOL_M:
             failures.append(
@@ -837,6 +1043,16 @@ def validate_stage6_geometry(data: dict[str, Any]) -> list[str]:
     )
     if same_side_ori and vec_norm(vec_sub(side_pos, side_neg)) <= _CENTER_TOL_M:
         failures.append("side views are identical in both center and orientation")
+    if "bottom_circle" in data.get("views", {}):
+        bottom = data["views"]["bottom_circle"]
+        if bottom.normal_in_object[2] > -_CAP_Z_ABS_MIN:
+            failures.append(
+                f"bottom_circle must be object -Z, got {bottom.normal_in_object}"
+            )
+        if abs(bottom.center_in_object[2] + 0.5 * height) > _CENTER_TOL_M:
+            failures.append(
+                f"bottom_circle center {bottom.center_in_object} != [0,0,-H/2]"
+            )
 
     tcp = data["tcp_t_object"]
     if interpret_tcp_object_rotation(tcp) != "Rx(180 deg)":

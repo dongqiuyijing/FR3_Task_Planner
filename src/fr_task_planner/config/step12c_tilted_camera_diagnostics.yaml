@@ -1,0 +1,71 @@
+status: PASS
+failure_classification: none
+p1: [0.000000000, 0.300000000, 1.200000000]
+camera_design_position: [0.000000000, 0.000000000, 1.400000000]
+camera_forward: [0.000000000, 0.707106781, -0.707106781]
+order: A,B,C(bottom_circle)
+arm1_c_semantic: bottom_circle
+arm1_c_physical: original_table_contact_bottom
+arm1_c_local_normal: [0.0, 0.0, -1.0]
+arm1_c_surface_local_center: [0.0, 0.0, -0.017500000]
+arm2_future_face: top_circle
+arm2_future_local_normal: [0.0, 0.0, 1.0]
+old_wrong_c: object_+Z_original_top
+old_wrong_c_visibility_valid: 0
+roll_step_deg: 5.000000000
+top_k: 10
+beam_width: 5
+edge_attempts: 3
+search_planning_time: 3.000000000
+prefix_ok: true
+prefix_time: 5.457815815
+view_A:
+  roll_samples: 72
+  orientation_valid: 72
+  raw_ik: 289
+  joint_valid: 289
+  collision_free: 80
+  visibility_valid: 80
+  vis_center_blocked: 0
+  vis_fraction_blocked: 0
+  vis_occluders: none
+  dominant_pair: forearm_link <-> mounting_column
+  best_column_distance: 0.074799999
+view_B:
+  roll_samples: 72
+  orientation_valid: 72
+  raw_ik: 293
+  joint_valid: 293
+  collision_free: 82
+  visibility_valid: 82
+  vis_center_blocked: 0
+  vis_fraction_blocked: 0
+  vis_occluders: none
+  dominant_pair: forearm_link <-> mounting_column
+  best_column_distance: 0.074799999
+view_C:
+  roll_samples: 72
+  orientation_valid: 72
+  raw_ik: 275
+  joint_valid: 275
+  collision_free: 227
+  visibility_valid: 116
+  vis_center_blocked: 0
+  vis_fraction_blocked: 0
+  vis_occluders: none
+  dominant_pair: finger_r <-> forearm_link
+  best_column_distance: 0.074799999
+winner:
+  a_roll: -90.000000000
+  b_roll: -130.000000000
+  c_roll: -85.000000000
+  a_joints_rad: [0.761386084, -0.642747728, 1.360379768, 0.853167960, 1.570792654, -0.024008243]
+  b_joints_rad: [0.128839903, -0.765711154, 2.071148432, 0.157964462, 0.879595649, 2.523736939]
+  c_joints_rad: [0.398510667, 0.059882338, 0.469679891, -0.529563111, -1.172285497, 2.443454499]
+  a_joints_deg: [43.624, -36.827, 77.944, 48.883, 90.000, -1.376]
+  b_joints_deg: [7.382, -43.872, 118.668, 9.051, 50.397, 144.599]
+  c_joints_deg: [22.833, 3.431, 26.911, -30.342, -67.167, 140.000]
+  predicted_total_trajectory_time: 13.847580915
+  total_joint_path_length: 14.505901660
+  minimum_clearance: 0.074799999
+  label: BEST SAMPLED FEASIBLE COMPLETE TASK WITHIN CONFIGURED SEARCH BUDGET
