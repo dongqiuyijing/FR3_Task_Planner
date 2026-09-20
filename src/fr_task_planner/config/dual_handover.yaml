@@ -1,0 +1,35 @@
+# DUAL-4A
+# 单位：m
+# 坐标系：world
+# 仅进行几何计算，不执行机械臂运动。
+
+object:
+  name: small_part
+
+  center_world:
+    x: 0.0
+    y: 0.4
+    z: 0.9
+
+  radius_m: 0.0075
+  length_m: 0.035
+
+handover:
+  # 初始几何候选，不代表已通过碰撞或夹持可行性验证。
+  #
+  # Arm B 抓取靠近原始底面（world -X）的一段。
+  # 负数代表 Arm B TCP 位于零件中心的 -X 方向。
+  #
+  # 后续 DUAL-4B 会在真实可夹持范围内搜索此参数。
+  arm_b_grasp_offset_x_m: -0.008
+
+  prehandover_b_distance_m: 0.20
+
+  # 原始顶面指向 world +X。
+  original_top_direction_world: [1.0, 0.0, 0.0]
+
+  arm_a_fingertip_direction_world: [-1.0, 0.0, 0.0]
+  arm_b_fingertip_direction_world: [1.0, 0.0, 0.0]
+
+execution:
+  enabled: false

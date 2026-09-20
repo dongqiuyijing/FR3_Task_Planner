@@ -417,6 +417,26 @@ ament_target_dependencies(
   moveit_ros_planning_interface
 )
 
+# DUAL-4B-1: handover IK-only test. No execute.
+add_executable(
+  dual_handover_ik_test
+  src/dual_handover_ik_test.cpp
+)
+
+target_link_libraries(
+  dual_handover_ik_test
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_handover_ik_test
+  rclcpp
+  sensor_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
 install(TARGETS
   fr3_mtc_smoke_test
   fr3_mtc_pregrasp_test
@@ -440,6 +460,7 @@ install(TARGETS
   dual_model_smoke
   dual_arm_a_prefix_plan
   dual_arm_b_plan
+  dual_handover_ik_test
   DESTINATION lib/${PROJECT_NAME}
 )
 
