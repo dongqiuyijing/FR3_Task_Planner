@@ -33,7 +33,7 @@ successful_prefixes: 4
 complete_candidates_evaluated: 4
 complete_feasible_candidates: 4
 complete_rejected: 0
-search_elapsed_sec: 30.24847624899999943
+search_elapsed_sec: 34.76291069900000252
 search_timeout_sec: 900.00000000000000000
 timed_out: false
 old_home_j1: -2.27141167580447467
@@ -47,30 +47,30 @@ old_a_to_b_time: 3.19240797700000023
 old_b_to_c_time: 2.86490045900000023
 old_full_home_to_c_time: 15.04690851000000151
 old_scaled_home_to_c_at_005: 300.93817020000000184
-new_home_to_pregrasp_time: 2.51328827900000018
-new_home_to_pregrasp_j1_travel: 0.11577887174760448
-new_home_to_pregrasp_path: 2.16849469182270882
-new_home_to_grasp_lift_time: 3.26761018100000022
-new_lift_to_a_time: 3.73778983700000023
-new_a_to_b_time: 3.19234841899999999
-new_b_to_c_time: 2.86479932900000023
-new_full_home_to_c_time: 13.06254776600000156
-new_scaled_home_to_c_at_005: 261.25095532000000276
-new_joint_path_length: 14.25237948053553438
+new_home_to_pregrasp_time: 2.51332231600000000
+new_home_to_pregrasp_j1_travel: 0.11550548666504623
+new_home_to_pregrasp_path: 2.16859585361689611
+new_home_to_grasp_lift_time: 3.26750834999999995
+new_lift_to_a_time: 3.73777763799999985
+new_a_to_b_time: 3.19234607900000000
+new_b_to_c_time: 2.86486802499999982
+new_full_home_to_c_time: 13.06250009200000051
+new_scaled_home_to_c_at_005: 261.25000183999998171
+new_joint_path_length: 14.25248914257740473
 new_minimum_clearance: 0.07479999873323856
 new_collision_free: true
 winner_candidate_id: ik_1
 winner_seed_name: home_exact
 winner_is_baseline: false
-winner_pregrasp_joints: [-2.155696054721, -3.222049888912, -0.421513880087, -2.639609311953, 0.200486664501, 0.785490834149]
-winner_grasp_joints: [-2.317060684231, -3.287086729710, -0.272399151414, -2.723784551731, 0.039133806114, 0.785483501340]
-winner_lift_joints: [-2.155757503642, -3.222093713592, -0.421478088334, -2.639629434009, 0.200436986588, 0.785415224060]
+winner_pregrasp_joints: [-2.155823770472, -3.222019559633, -0.421413917677, -2.639588371302, 0.200525048236, 0.785363522549]
+winner_grasp_joints: [-2.317060684262, -3.287097664086, -0.272374772243, -2.723806618991, 0.039133806094, 0.785492127189]
+winner_lift_joints: [-2.155757503640, -3.222095381553, -0.421474606578, -2.639632933219, 0.200436986577, 0.785416885537]
 winner_a_joints: [0.761386084000, -0.642747728000, 1.360379768000, 0.853167960000, 1.570792654000, -0.024008243000]
 winner_b_joints: [0.128839903000, -0.765711154000, 2.071148432000, 0.157964462000, 0.879595649000, 2.523736939000]
 winner_c_joints: [0.398510667000, 0.059882338000, 0.469679891000, -0.529563111000, -1.172285497000, 2.443454499000]
-best_prefix_time: 3.26750389100000049
-best_prefix_j1_travel: 0.11552443599271056
-best_prefix_joint_path: 2.77814810162086401
+best_prefix_time: 3.26756072400000042
+best_prefix_j1_travel: 0.11560978393464794
+best_prefix_joint_path: 2.77831864826994446
 home_to_pregrasp_pipeline: ompl
 pregrasp_to_grasp_pipeline: pilz_industrial_motion_planner
 pregrasp_to_grasp_planner_id: LIN
@@ -103,22 +103,22 @@ candidates:
     seed: home_nearby
     baseline: false
     valid: true
-    joints: [-2.155757492677, -3.610673447997, 0.421477713957, -3.094005530480, 0.200436904402, 0.785415233075]
-    fk_position_error: 0.00000000242745795
-    fk_orientation_error_deg: 0.00002063237243740
-    distance_from_home: 3.03792879255148041
-    j1_abs_displacement: 0.11565418312740272
+    joints: [-2.155757498835, -3.610678984186, 0.421489516739, -3.094013549611, 0.200436991369, 0.785416981346]
+    fk_position_error: 0.00000085918495369
+    fk_orientation_error_deg: 0.00000000000000000
+    distance_from_home: 3.03794184236940357
+    j1_abs_displacement: 0.11565417696951386
     collision_free: true
     failure_reason: ok
   - id: ik_3
     seed: home_nearby
     baseline: false
     valid: true
-    joints: [0.574961258662, 0.469049309517, -0.421413157578, -0.047584173783, 2.931155748957, 0.785450529475]
-    fk_position_error: 0.00000009573164040
+    joints: [0.574961256847, 0.469048588149, -0.421411600425, -0.047585022742, 2.931155748065, 0.785450516009]
+    fk_position_error: 0.00000001052101120
     fk_orientation_error_deg: 0.00000000000000000
-    distance_from_home: 5.58984966277947759
-    j1_abs_displacement: 2.84637293446619388
+    distance_from_home: 5.58984936357262985
+    j1_abs_displacement: 2.84637293265100810
     collision_free: true
     failure_reason: ok
 winner_output_path: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step14_optimized_grasp_winner.yaml
