@@ -146,6 +146,10 @@ class Step13GripperLaunchTest(unittest.TestCase):
             text = handle.read()
         self.assertIn('DeclareLaunchArgument("gripper_timeout_sec", default_value="15.0")', text)
         self.assertIn(
+            'DeclareLaunchArgument("startup_ready_timeout_sec", default_value="15.0")', text
+        )
+        self.assertIn('DeclareLaunchArgument("execute", default_value="false")', text)
+        self.assertIn(
             'DeclareLaunchArgument("gripper_post_close_wait_sec", default_value="0.5")', text
         )
         self.assertIn('DeclareLaunchArgument("gripper_ping_only", default_value="false")', text)
@@ -170,6 +174,7 @@ class Step13GripperLaunchTest(unittest.TestCase):
         self.assertEqual(int(data["gripper_rot_vel"]), 0)
         self.assertEqual(int(data["gripper_rot_torque"]), 0)
         self.assertEqual(float(data["gripper_timeout_sec"]), 15.0)
+        self.assertEqual(float(data["startup_ready_timeout_sec"]), 15.0)
 
 
 class Step13CppBinaryTest(unittest.TestCase):

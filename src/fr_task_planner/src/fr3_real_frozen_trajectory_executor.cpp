@@ -39,6 +39,8 @@ using fr_task_planner::ExecutorTrace;
 using fr_task_planner::JointSnapshot;
 using fr_task_planner::PlanResult;
 using fr_task_planner::SendResult;
+using fr_task_planner::StartupInterfaceStatus;
+using fr_task_planner::StartupReadyHooks;
 using fr_task_planner::TrajectorySegmentRecord;
 using fr_task_planner::actionTimeoutSec;
 using fr_task_planner::collectDeployableSegments;
@@ -46,8 +48,10 @@ using fr_task_planner::computeDuration;
 using fr_task_planner::defaultTouchLinks;
 using fr_task_planner::deployableLogicalOrder;
 using fr_task_planner::kArmJoints;
+using fr_task_planner::kDefaultStartupReadyTimeoutSec;
 using fr_task_planner::kDefaultGripperService;
 using fr_task_planner::kDefaultTrajectoryActionName;
+using fr_task_planner::kErrorStartupInterfacesNotReady;
 using fr_task_planner::kLogicalCurrentToHome;
 using fr_task_planner::kRealRobotConfirmation;
 using fr_task_planner::motionAllowed;
@@ -56,6 +60,7 @@ using fr_task_planner::remapSegmentByJointName;
 using fr_task_planner::runFrozenExecutor;
 using fr_task_planner::scaleDeployableTrajectory;
 using fr_task_planner::segmentDuration;
+using fr_task_planner::waitForStartupInterfaces;
 using fr_task_planner::writeTrajectoryYaml;
 
 using FollowJointTrajectory = control_msgs::action::FollowJointTrajectory;
@@ -207,6 +212,8 @@ public:
                 cfg_.gripper_post_close_wait_sec);
     RCLCPP_INFO(node_->get_logger(), "gripper_ping_only: %s",
                 cfg_.gripper_ping_only ? "true" : "false");
+    RCLCPP_INFO(node_->get_logger(), "startup_ready_timeout_sec: %.3f",
+                cfg_.startup_ready_timeout_sec);
     RCLCPP_INFO(node_->get_logger(), "motion gate: %s", gate_reason.c_str());
     if (cfg_.gripper_ping_only)
     {
@@ -311,7 +318,30 @@ public:
     move_client_ = rclcpp_action::create_client<MoveGroup>(node_, "move_action");
 
     publishFrozenPreview(scaled);
-    inspectLive(motion);
+    const auto ready = waitUntilLiveReady();
+    inspectLive(motion, ready);
+    if (!ready.allReady())
+    {
+      live_interfaces_ready_ = false;
+      RCLCPP_ERROR(node_->get_logger(),
+                   "STARTUP READY: refusing Current→Home, gripper open/close, and all subsequent "
+                   "motion (%s)",
+                   ready.timeout_reason.c_str());
+      if (motion || cfg_.plan_current_to_home)
+      {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "startup interfaces not ready; aborting before Current→Home or any motion");
+        RCLCPP_INFO(node_->get_logger(), "commands sent to robot: %d", motion_commands_sent_);
+        RCLCPP_INFO(node_->get_logger(), "commands sent to gripper: %d", gripper_commands_sent_);
+        return 1;
+      }
+      RCLCPP_WARN(node_->get_logger(),
+                  "startup interfaces not ready; continuing offline dry-run with motion gated off");
+    }
+    else
+    {
+      live_interfaces_ready_ = true;
+    }
 
     ExecutorHooks hooks;
     hooks.log = [this](const std::string& text) {
@@ -362,6 +392,8 @@ private:
     cfg_.joint_settle_required_samples =
         getInt(node_, "joint_settle_required_samples", 3);
     cfg_.joint_state_max_age_sec = getDouble(node_, "joint_state_max_age_sec", 0.5);
+    cfg_.startup_ready_timeout_sec =
+        getDouble(node_, "startup_ready_timeout_sec", kDefaultStartupReadyTimeoutSec);
     cfg_.timeout_factor = getDouble(node_, "timeout_factor", 1.5);
     cfg_.timeout_margin_sec = getDouble(node_, "timeout_margin_sec", 10.0);
     cfg_.gripper_timeout_sec = getDouble(node_, "gripper_timeout_sec", 15.0);
@@ -399,6 +431,18 @@ private:
     return motionAllowed(cfg_, reason);
   }
 
+  std::optional<JointSnapshot> peekSnapshot()
+  {
+    std::lock_guard<std::mutex> lock(joint_mu_);
+    if (!have_joints_)
+    {
+      return std::nullopt;
+    }
+    auto snap = latest_joints_;
+    snap.age_sec = std::max(0.0, (node_->get_clock()->now() - last_joint_stamp_).seconds());
+    return snap;
+  }
+
   void onJointState(const sensor_msgs::msg::JointState::SharedPtr msg)
   {
     std::lock_guard<std::mutex> lock(joint_mu_);
@@ -425,37 +469,80 @@ private:
     for (int i = 0; i < 20 && rclcpp::ok(); ++i)
     {
       rclcpp::spin_some(node_);
-      std::lock_guard<std::mutex> lock(joint_mu_);
-      if (have_joints_)
+      if (auto snap = peekSnapshot())
       {
-        auto snap = latest_joints_;
-        snap.age_sec = std::max(0.0, (node_->get_clock()->now() - last_joint_stamp_).seconds());
         return snap;
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
-    std::lock_guard<std::mutex> lock(joint_mu_);
-    if (!have_joints_)
-    {
-      return std::nullopt;
-    }
-    auto snap = latest_joints_;
-    snap.age_sec = std::max(0.0, (node_->get_clock()->now() - last_joint_stamp_).seconds());
-    return snap;
+    return peekSnapshot();
   }
 
-  void inspectLive(bool motion)
+  StartupInterfaceStatus waitUntilLiveReady()
   {
-    auto snap = currentSnapshot();
-    if (snap)
+    StartupReadyHooks hooks;
+    hooks.readJoints = [this]() {
+      rclcpp::spin_some(node_);
+      return peekSnapshot();
+    };
+    hooks.actionReady = [this]() {
+      return traj_client_ && traj_client_->action_server_is_ready();
+    };
+    hooks.gripperReady = [this]() {
+      return gripper_client_ && gripper_client_->service_is_ready();
+    };
+    hooks.nowSec = []() {
+      return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch())
+          .count();
+    };
+    hooks.sleepSec = [this](double seconds) {
+      const auto deadline =
+          std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+      while (rclcpp::ok() && std::chrono::steady_clock::now() < deadline)
+      {
+        rclcpp::spin_some(node_);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+      }
+    };
+    hooks.log = [this](const std::string& text) {
+      if (text.find("TIMEOUT") != std::string::npos ||
+          text.find("NOT READY") != std::string::npos ||
+          text.find(kErrorStartupInterfacesNotReady) != std::string::npos)
+      {
+        RCLCPP_ERROR(node_->get_logger(), "%s", text.c_str());
+        return;
+      }
+      RCLCPP_INFO(node_->get_logger(), "%s", text.c_str());
+    };
+    return waitForStartupInterfaces(cfg_, hooks, cfg_.startup_ready_timeout_sec);
+  }
+
+  void inspectLive(bool motion, const StartupInterfaceStatus& ready)
+  {
+    if (ready.received_joint_msg)
     {
-      RCLCPP_INFO(node_->get_logger(), "live /joint_states: available joints=%zu age=%.3f",
-                  snap->joints.size(), snap->age_sec);
+      std::ostringstream names;
+      for (size_t i = 0; i < ready.joint_names.size(); ++i)
+      {
+        if (i)
+        {
+          names << ",";
+        }
+        names << ready.joint_names[i];
+      }
+      RCLCPP_INFO(node_->get_logger(),
+                  "live /joint_states: available first_msg_elapsed=%.3f s names=%s age=%.3f s "
+                  "ready=%s waited=%.3f s",
+                  ready.first_joint_msg_elapsed_sec,
+                  ready.joint_names.empty() ? "(none)" : names.str().c_str(), ready.joint_age_sec,
+                  ready.joints_ready ? "YES" : "NO", ready.joints_wait_sec);
     }
     else
     {
       RCLCPP_WARN(node_->get_logger(),
-                  "live /joint_states: not available (ok for offline dry-run)");
+                  "live /joint_states: not available received=NO waited=%.3f s reason=%s%s",
+                  ready.joints_wait_sec, ready.joints_reason.c_str(),
+                  motion ? "" : " (ok for offline dry-run)");
     }
     const bool sim = node_->get_parameter("use_sim_time").as_bool();
     RCLCPP_INFO(node_->get_logger(), "executor use_sim_time=%s", sim ? "true" : "false");
@@ -503,13 +590,14 @@ private:
     {
       RCLCPP_INFO(node_->get_logger(), "move_group parameter inspect skipped: %s", ex.what());
     }
-    const bool action_up =
-        traj_client_->wait_for_action_server(std::chrono::milliseconds(200));
-    RCLCPP_INFO(node_->get_logger(), "live trajectory action %s: %s",
-                cfg_.trajectory_action_name.c_str(), action_up ? "available" : "not online");
-    const bool gripper_up = gripper_client_->wait_for_service(std::chrono::milliseconds(200));
-    RCLCPP_INFO(node_->get_logger(), "live gripper service %s: %s",
-                cfg_.gripper_service_name.c_str(), gripper_up ? "available" : "not online");
+    const bool action_up = ready.action_ready;
+    RCLCPP_INFO(node_->get_logger(),
+                "live trajectory action %s: %s waited=%.3f s", cfg_.trajectory_action_name.c_str(),
+                action_up ? "available" : "not online", ready.action_wait_sec);
+    const bool gripper_up = ready.gripper_ready;
+    RCLCPP_INFO(node_->get_logger(), "live gripper service %s: %s waited=%.3f s",
+                cfg_.gripper_service_name.c_str(), gripper_up ? "available" : "not online",
+                ready.gripper_wait_sec);
     if (gazebo_detected_)
     {
       RCLCPP_WARN(node_->get_logger(),
@@ -523,6 +611,10 @@ private:
 
   bool controllerReadyLive()
   {
+    if (!live_interfaces_ready_)
+    {
+      return false;
+    }
     return traj_client_->wait_for_action_server(std::chrono::seconds(2));
   }
 
@@ -556,6 +648,13 @@ private:
       result.success = true;
       RCLCPP_INFO(node_->get_logger(),
                   "dry-run: Current→Home remains RUNTIME REPLAN; not calling move_group");
+      return result;
+    }
+    if (!live_interfaces_ready_)
+    {
+      result.error = std::string(kErrorStartupInterfacesNotReady) +
+                     "; refusing Current→Home";
+      RCLCPP_ERROR(node_->get_logger(), "%s", result.error.c_str());
       return result;
     }
     if (!move_client_->wait_for_action_server(std::chrono::seconds(5)))
@@ -652,6 +751,13 @@ private:
       result.error = "refusing frozen Current_to_Home";
       return result;
     }
+    if (!live_interfaces_ready_)
+    {
+      result.error = std::string(kErrorStartupInterfacesNotReady) +
+                     "; refusing FollowJointTrajectory";
+      RCLCPP_ERROR(node_->get_logger(), "%s", result.error.c_str());
+      return result;
+    }
     if (!motionGateOpen())
     {
       result.error = "motion gate closed; refusing FollowJointTrajectory";
@@ -717,6 +823,38 @@ private:
     RCLCPP_INFO(node_->get_logger(),
                 "MODE: GRIPPER_PING_ONLY (non-motion ping; no MoveGripper/ActGripper/arm motion)");
     ensureGripperClient();
+    const double timeout = std::max(0.0, cfg_.startup_ready_timeout_sec);
+    const auto t0 = std::chrono::steady_clock::now();
+    bool gripper_up = false;
+    double waited = 0.0;
+    RCLCPP_INFO(node_->get_logger(),
+                "STARTUP READY: gripper ping-only waiting up to %.3f s for %s (no arm/gripper "
+                "motion)",
+                timeout, cfg_.gripper_service_name.c_str());
+    while (rclcpp::ok())
+    {
+      rclcpp::spin_some(node_);
+      gripper_up = gripper_client_ && gripper_client_->service_is_ready();
+      waited = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+      if (gripper_up || waited >= timeout)
+      {
+        break;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    RCLCPP_INFO(node_->get_logger(),
+                "STARTUP READY: gripper ping-only service %s available=%s waited=%.3f s",
+                cfg_.gripper_service_name.c_str(), gripper_up ? "YES" : "NO", waited);
+    if (!gripper_up)
+    {
+      RCLCPP_ERROR(node_->get_logger(),
+                   "STARTUP READY TIMEOUT gripper_service=not online waited=%.3f s; ping-only "
+                   "will not send motion",
+                   waited);
+      RCLCPP_INFO(node_->get_logger(), "commands sent to robot: %d", motion_commands_sent_);
+      RCLCPP_INFO(node_->get_logger(), "commands sent to gripper: %d", gripper_commands_sent_);
+      return 1;
+    }
     auto ping = pingGripper(false);
     RCLCPP_INFO(node_->get_logger(), "gripper ping-only ok=%s error=%s",
                 ping.success ? "true" : "false", ping.error.c_str());
@@ -768,6 +906,11 @@ private:
     using fr_task_planner::gripperCompletionName;
     SendResult result;
     result.attempted = true;
+    if (require_motion_gate && !live_interfaces_ready_)
+    {
+      result.error = std::string(kErrorStartupInterfacesNotReady) + "; refusing gripper command";
+      return result;
+    }
     if (require_motion_gate && !motionGateOpen())
     {
       result.error = "motion gate closed; refusing gripper command";
@@ -881,6 +1024,12 @@ private:
   {
     SendResult result;
     result.attempted = true;
+    if (!live_interfaces_ready_)
+    {
+      result.error = std::string(kErrorStartupInterfacesNotReady) +
+                     "; refusing PlanningScene attach";
+      return result;
+    }
     if (!motionGateOpen())
     {
       result.error = "motion gate closed; refusing PlanningScene attach";
@@ -903,6 +1052,11 @@ private:
   {
     SendResult result;
     result.attempted = true;
+    if (!live_interfaces_ready_)
+    {
+      result.error = std::string(kErrorStartupInterfacesNotReady) + "; refusing ACM restore";
+      return result;
+    }
     if (!motionGateOpen())
     {
       result.error = "motion gate closed; refusing ACM restore";
@@ -968,6 +1122,7 @@ private:
   JointSnapshot latest_joints_;
   rclcpp::Time last_joint_stamp_{ 0, 0, RCL_ROS_TIME };
   bool have_joints_ = false;
+  bool live_interfaces_ready_ = false;
   bool gazebo_detected_ = false;
   int motion_commands_sent_ = 0;
   int gripper_commands_sent_ = 0;
@@ -999,6 +1154,7 @@ int main(int argc, char** argv)
   declareDefault(node, "joint_settle_poll_period_sec", 0.10);
   declareDefault(node, "joint_settle_required_samples", 3);
   declareDefault(node, "joint_state_max_age_sec", 0.5);
+  declareDefault(node, "startup_ready_timeout_sec", kDefaultStartupReadyTimeoutSec);
   declareDefault(node, "timeout_factor", 1.5);
   declareDefault(node, "timeout_margin_sec", 10.0);
   declareDefault(node, "gripper_timeout_sec", 15.0);

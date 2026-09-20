@@ -144,6 +144,9 @@ def _launch_nodes(context, *args, **kwargs):
         "joint_settle_required_samples": int(
             LaunchConfiguration("joint_settle_required_samples").perform(context)
         ),
+        "startup_ready_timeout_sec": float(
+            LaunchConfiguration("startup_ready_timeout_sec").perform(context)
+        ),
         "gripper_enabled": LaunchConfiguration("gripper_enabled").perform(context).lower()
         == "true",
         "real_robot_confirmation": LaunchConfiguration("real_robot_confirmation").perform(
@@ -233,6 +236,7 @@ def generate_launch_description():
             DeclareLaunchArgument("joint_settle_timeout_sec", default_value="10.0"),
             DeclareLaunchArgument("joint_settle_poll_period_sec", default_value="0.10"),
             DeclareLaunchArgument("joint_settle_required_samples", default_value="3"),
+            DeclareLaunchArgument("startup_ready_timeout_sec", default_value="15.0"),
             DeclareLaunchArgument("gripper_enabled", default_value="true"),
             DeclareLaunchArgument("gripper_timeout_sec", default_value="15.0"),
             DeclareLaunchArgument("gripper_post_close_wait_sec", default_value="0.5"),

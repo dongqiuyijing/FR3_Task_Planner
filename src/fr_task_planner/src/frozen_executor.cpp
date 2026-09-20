@@ -854,6 +854,281 @@ bool snapshotFresh(const JointSnapshot& snap, double max_age_sec, std::string& e
   return true;
 }
 
+namespace
+{
+std::string joinSnapshotNames(const JointSnapshot& snap)
+{
+  std::ostringstream oss;
+  bool first = true;
+  for (const auto& kv : snap.joints)
+  {
+    if (!first)
+    {
+      oss << ",";
+    }
+    first = false;
+    oss << kv.first;
+  }
+  return first ? std::string("(none)") : oss.str();
+}
+
+void emitStartupLog(StartupInterfaceStatus& st, const StartupReadyHooks& hooks,
+                    const std::string& text)
+{
+  st.logs.push_back(text);
+  if (hooks.log)
+  {
+    hooks.log(text);
+  }
+}
+
+std::string formatStartupTimeoutReason(const StartupInterfaceStatus& st)
+{
+  std::ostringstream oss;
+  oss << kErrorStartupInterfacesNotReady;
+  if (!st.joints_ready)
+  {
+    oss << " joint_states=" << (st.joints_reason.empty() ? "not ready" : st.joints_reason);
+  }
+  if (!st.action_ready)
+  {
+    oss << " trajectory_action=not online";
+  }
+  if (!st.gripper_ready)
+  {
+    oss << " gripper_service=not online";
+  }
+  return oss.str();
+}
+}  // namespace
+
+StartupInterfaceStatus waitForStartupInterfaces(const ExecutorConfig& cfg,
+                                                const StartupReadyHooks& hooks,
+                                                double timeout_sec)
+{
+  StartupInterfaceStatus st;
+  const double timeout = std::max(0.0, timeout_sec);
+  const double poll = kDefaultStartupReadyPollSec;
+  auto now = [&]() { return hooks.nowSec ? hooks.nowSec() : defaultNowSec(); };
+  auto sleep = [&](double seconds) {
+    if (hooks.sleepSec)
+    {
+      hooks.sleepSec(seconds);
+      return;
+    }
+    defaultSleepSec(seconds);
+  };
+  const double t0 = now();
+
+  auto elapsedNow = [&]() { return std::max(0.0, now() - t0); };
+
+  {
+    std::ostringstream oss;
+    oss.setf(std::ios::fixed);
+    oss.precision(3);
+    oss << "STARTUP READY: waiting up to " << timeout
+        << "s for /joint_states (actual message + j1..j6 + fresh), trajectory action, "
+           "gripper service";
+    emitStartupLog(st, hooks, oss.str());
+  }
+
+  while (true)
+  {
+    const double elapsed = elapsedNow();
+    st.total_wait_sec = elapsed;
+
+    if (!st.joints_ready)
+    {
+      st.joints_wait_sec = elapsed;
+      if (!hooks.readJoints)
+      {
+        st.joints_reason = "joint_states unavailable";
+      }
+      else
+      {
+        auto snap = hooks.readJoints();
+        if (!snap)
+        {
+          st.joints_reason = "joint_states message not received";
+        }
+        else
+        {
+          if (!st.received_joint_msg)
+          {
+            st.received_joint_msg = true;
+            st.first_joint_msg_elapsed_sec = elapsed;
+            st.joint_names.clear();
+            for (const auto& kv : snap->joints)
+            {
+              st.joint_names.push_back(kv.first);
+            }
+            st.joint_age_sec = snap->age_sec;
+            std::ostringstream oss;
+            oss.setf(std::ios::fixed);
+            oss.precision(3);
+            oss << "STARTUP READY: first /joint_states received elapsed=" << elapsed
+                << "s names=" << joinSnapshotNames(*snap) << " age=" << snap->age_sec << "s";
+            emitStartupLog(st, hooks, oss.str());
+          }
+          st.joint_names.clear();
+          for (const auto& kv : snap->joints)
+          {
+            st.joint_names.push_back(kv.first);
+          }
+          st.joint_age_sec = snap->age_sec;
+          std::string local;
+          if (snapshotHasRequiredJoints(*snap, local) &&
+              snapshotFresh(*snap, cfg.joint_state_max_age_sec, local))
+          {
+            st.joints_ready = true;
+            st.joints_reason.clear();
+            st.joints_wait_sec = elapsed;
+            std::ostringstream oss;
+            oss.setf(std::ios::fixed);
+            oss.precision(3);
+            oss << "STARTUP READY: /joint_states ready elapsed=" << elapsed
+                << "s names=" << joinSnapshotNames(*snap) << " age=" << snap->age_sec << "s";
+            emitStartupLog(st, hooks, oss.str());
+          }
+          else
+          {
+            st.joints_reason = local.empty() ? "joint_states not ready" : local;
+          }
+        }
+      }
+    }
+
+    if (!st.action_ready)
+    {
+      st.action_wait_sec = elapsed;
+      st.action_available = hooks.actionReady && hooks.actionReady();
+      if (st.action_available)
+      {
+        st.action_ready = true;
+        st.action_wait_sec = elapsed;
+        std::ostringstream oss;
+        oss.setf(std::ios::fixed);
+        oss.precision(3);
+        oss << "STARTUP READY: trajectory action available elapsed=" << elapsed << "s";
+        emitStartupLog(st, hooks, oss.str());
+      }
+    }
+
+    if (!st.gripper_ready)
+    {
+      st.gripper_wait_sec = elapsed;
+      st.gripper_available = hooks.gripperReady && hooks.gripperReady();
+      if (st.gripper_available)
+      {
+        st.gripper_ready = true;
+        st.gripper_wait_sec = elapsed;
+        std::ostringstream oss;
+        oss.setf(std::ios::fixed);
+        oss.precision(3);
+        oss << "STARTUP READY: gripper service available elapsed=" << elapsed << "s";
+        emitStartupLog(st, hooks, oss.str());
+      }
+    }
+
+    if (st.allReady())
+    {
+      st.total_wait_sec = elapsedNow();
+      std::ostringstream oss;
+      oss.setf(std::ios::fixed);
+      oss.precision(3);
+      oss << "STARTUP READY: all interfaces ready total_wait=" << st.total_wait_sec
+          << "s joints_wait=" << st.joints_wait_sec << "s action_wait=" << st.action_wait_sec
+          << "s gripper_wait=" << st.gripper_wait_sec << "s";
+      emitStartupLog(st, hooks, oss.str());
+      return st;
+    }
+
+    if (elapsed >= timeout)
+    {
+      break;
+    }
+    sleep(poll);
+  }
+
+  st.total_wait_sec = elapsedNow();
+  if (!st.joints_ready)
+  {
+    st.joints_wait_sec = st.total_wait_sec;
+    if (st.joints_reason.empty())
+    {
+      st.joints_reason = "joint_states message not received";
+    }
+  }
+  if (!st.action_ready)
+  {
+    st.action_wait_sec = st.total_wait_sec;
+    st.action_available = false;
+  }
+  if (!st.gripper_ready)
+  {
+    st.gripper_wait_sec = st.total_wait_sec;
+    st.gripper_available = false;
+  }
+  st.timeout_reason = formatStartupTimeoutReason(st);
+
+  {
+    std::ostringstream oss;
+    oss.setf(std::ios::fixed);
+    oss.precision(3);
+    oss << "STARTUP READY TIMEOUT total_wait=" << st.total_wait_sec << "s";
+    emitStartupLog(st, hooks, oss.str());
+  }
+  {
+    std::ostringstream oss;
+    oss.setf(std::ios::fixed);
+    oss.precision(3);
+    oss << "STARTUP READY: joint_states " << (st.joints_ready ? "READY" : "NOT READY")
+        << " waited=" << st.joints_wait_sec << "s received="
+        << (st.received_joint_msg ? "YES" : "NO") << " names=";
+    if (st.joint_names.empty())
+    {
+      oss << "(none)";
+    }
+    else
+    {
+      for (size_t i = 0; i < st.joint_names.size(); ++i)
+      {
+        if (i)
+        {
+          oss << ",";
+        }
+        oss << st.joint_names[i];
+      }
+    }
+    oss << " age=" << st.joint_age_sec << "s";
+    if (!st.joints_ready)
+    {
+      oss << " reason=" << st.joints_reason;
+    }
+    emitStartupLog(st, hooks, oss.str());
+  }
+  {
+    std::ostringstream oss;
+    oss.setf(std::ios::fixed);
+    oss.precision(3);
+    oss << "STARTUP READY: trajectory action " << (st.action_ready ? "READY" : "NOT READY")
+        << " waited=" << st.action_wait_sec << "s available="
+        << (st.action_available ? "YES" : "NO");
+    emitStartupLog(st, hooks, oss.str());
+  }
+  {
+    std::ostringstream oss;
+    oss.setf(std::ios::fixed);
+    oss.precision(3);
+    oss << "STARTUP READY: gripper service " << (st.gripper_ready ? "READY" : "NOT READY")
+        << " waited=" << st.gripper_wait_sec << "s available="
+        << (st.gripper_available ? "YES" : "NO");
+    emitStartupLog(st, hooks, oss.str());
+  }
+  emitStartupLog(st, hooks, std::string("STARTUP READY: ") + st.timeout_reason);
+  return st;
+}
+
 bool snapshotVelocityUnavailable(const JointSnapshot& snap)
 {
   if (snap.velocities.empty())

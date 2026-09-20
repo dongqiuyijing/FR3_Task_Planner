@@ -45,6 +45,9 @@ inline constexpr const char* kErrorNanTrajectory = "NAN_TRAJECTORY";
 inline constexpr const char* kErrorNonmonotonicTime = "NONMONOTONIC_TIME";
 inline constexpr const char* kErrorInvalidScale = "INVALID_SCALE";
 inline constexpr const char* kErrorCurrentToHomeDeployable = "CURRENT_TO_HOME_NOT_DEPLOYABLE";
+inline constexpr const char* kErrorStartupInterfacesNotReady = "STARTUP_INTERFACES_NOT_READY";
+inline constexpr double kDefaultStartupReadyTimeoutSec = 15.0;
+inline constexpr double kDefaultStartupReadyPollSec = 0.05;
 
 const std::vector<std::string>& deployableLogicalOrder();
 const std::vector<std::string>& defaultTouchLinks();
@@ -102,6 +105,7 @@ struct ExecutorConfig
   double joint_settle_poll_period_sec = 0.10;
   int joint_settle_required_samples = 3;
   double joint_state_max_age_sec = 0.5;
+  double startup_ready_timeout_sec = kDefaultStartupReadyTimeoutSec;
   double timeout_factor = 1.5;
   double timeout_margin_sec = 10.0;
   double gripper_timeout_sec = 15.0;
@@ -136,6 +140,41 @@ struct JointSnapshot
   std::map<std::string, double> velocities;
   double age_sec = 0.0;
   bool stamp_valid = false;
+};
+
+struct StartupReadyHooks
+{
+  std::function<std::optional<JointSnapshot>()> readJoints;
+  std::function<bool()> actionReady;
+  std::function<bool()> gripperReady;
+  std::function<void(double)> sleepSec;
+  std::function<double()> nowSec;
+  std::function<void(const std::string&)> log;
+};
+
+struct StartupInterfaceStatus
+{
+  bool joints_ready = false;
+  bool action_ready = false;
+  bool gripper_ready = false;
+  bool received_joint_msg = false;
+  double first_joint_msg_elapsed_sec = -1.0;
+  std::vector<std::string> joint_names;
+  double joint_age_sec = 0.0;
+  std::string joints_reason;
+  bool action_available = false;
+  bool gripper_available = false;
+  double joints_wait_sec = 0.0;
+  double action_wait_sec = 0.0;
+  double gripper_wait_sec = 0.0;
+  double total_wait_sec = 0.0;
+  std::string timeout_reason;
+  std::vector<std::string> logs;
+
+  bool allReady() const
+  {
+    return joints_ready && action_ready && gripper_ready;
+  }
 };
 
 struct SettleResult
@@ -322,6 +361,9 @@ StateCheckResult checkSegmentEnd(const JointSnapshot& snap, const TrajectorySegm
                                  double tolerance_rad);
 bool snapshotHasRequiredJoints(const JointSnapshot& snap, std::string& error);
 bool snapshotFresh(const JointSnapshot& snap, double max_age_sec, std::string& error);
+StartupInterfaceStatus waitForStartupInterfaces(const ExecutorConfig& cfg,
+                                                const StartupReadyHooks& hooks,
+                                                double timeout_sec);
 bool snapshotVelocityUnavailable(const JointSnapshot& snap);
 SettleResult waitForJointConvergence(const std::string& segment,
                                      const std::vector<std::string>& target_names,

@@ -6,6 +6,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -1036,6 +1037,131 @@ int main(int argc, char** argv)
     auto ping_kind = classifyGripperCompletion(ping_call, makeGripperPingRequest(ExecutorConfig{}));
     check(ping_kind == GripperCompletionKind::CommandAccepted && !gripperBridgeMotionDone(ping_kind),
           "GRIPPER_COMPLETION_ping_is_not_closed");
+  }
+
+  {
+    struct StartupMock
+    {
+      std::optional<JointSnapshot> joints;
+      double joints_after = 0.0;
+      double action_after = 0.0;
+      double gripper_after = 0.0;
+      double time_sec = 0.0;
+      StartupReadyHooks hooks()
+      {
+        StartupReadyHooks h;
+        h.readJoints = [this]() -> std::optional<JointSnapshot> {
+          if (!joints || time_sec < joints_after)
+          {
+            return std::nullopt;
+          }
+          return joints;
+        };
+        h.actionReady = [this]() { return time_sec >= action_after; };
+        h.gripperReady = [this]() { return time_sec >= gripper_after; };
+        h.nowSec = [this]() { return time_sec; };
+        h.sleepSec = [this](double s) { time_sec += s; };
+        return h;
+      }
+    };
+    ExecutorConfig ready_cfg;
+    ready_cfg.joint_state_max_age_sec = 0.5;
+
+    {
+      StartupMock m;
+      m.joints = snapFrom(kStep12cHomeRad);
+      auto st = waitForStartupInterfaces(ready_cfg, m.hooks(), 15.0);
+      check(st.allReady() && st.received_joint_msg && st.total_wait_sec < 1.0 &&
+                st.timeout_reason.empty(),
+            "STARTUP_READY_all_immediate");
+      bool saw_first = false;
+      bool saw_all = false;
+      for (const auto& line : st.logs)
+      {
+        saw_first = saw_first || line.find("first /joint_states received") != std::string::npos;
+        saw_all = saw_all || line.find("all interfaces ready") != std::string::npos;
+      }
+      check(saw_first && saw_all, "STARTUP_READY_logs_first_msg_and_all_ready");
+    }
+    {
+      StartupMock m;
+      m.joints = snapFrom(kStep12cHomeRad);
+      m.joints_after = 0.25;
+      m.action_after = 0.40;
+      m.gripper_after = 0.10;
+      auto st = waitForStartupInterfaces(ready_cfg, m.hooks(), 15.0);
+      check(st.allReady() && st.total_wait_sec >= 0.40 && st.total_wait_sec < 1.0 &&
+                st.joints_wait_sec >= 0.25 && st.action_wait_sec >= 0.40 &&
+                st.gripper_wait_sec >= 0.10 && st.first_joint_msg_elapsed_sec >= 0.25,
+            "STARTUP_READY_early_exit_before_15s");
+    }
+    {
+      StartupMock m;
+      m.action_after = 0.0;
+      m.gripper_after = 0.0;
+      auto st = waitForStartupInterfaces(ready_cfg, m.hooks(), 0.35);
+      check(!st.allReady() && !st.joints_ready && st.action_ready && st.gripper_ready &&
+                st.timeout_reason.find(kErrorStartupInterfacesNotReady) != std::string::npos &&
+                st.timeout_reason.find("joint_states=") != std::string::npos &&
+                st.timeout_reason.find("trajectory_action=") == std::string::npos &&
+                st.timeout_reason.find("gripper_service=") == std::string::npos,
+            "STARTUP_READY_timeout_joint_states");
+    }
+    {
+      StartupMock m;
+      m.joints = snapFrom(kStep12cHomeRad);
+      m.action_after = 99.0;
+      m.gripper_after = 0.0;
+      auto st = waitForStartupInterfaces(ready_cfg, m.hooks(), 0.35);
+      check(!st.allReady() && st.joints_ready && !st.action_ready && st.gripper_ready &&
+                st.timeout_reason.find("trajectory_action=not online") != std::string::npos &&
+                st.timeout_reason.find("joint_states=") == std::string::npos &&
+                st.timeout_reason.find("gripper_service=") == std::string::npos,
+            "STARTUP_READY_timeout_action");
+    }
+    {
+      StartupMock m;
+      m.joints = snapFrom(kStep12cHomeRad);
+      m.action_after = 0.0;
+      m.gripper_after = 99.0;
+      auto st = waitForStartupInterfaces(ready_cfg, m.hooks(), 0.35);
+      check(!st.allReady() && st.joints_ready && st.action_ready && !st.gripper_ready &&
+                st.timeout_reason.find("gripper_service=not online") != std::string::npos &&
+                st.timeout_reason.find("joint_states=") == std::string::npos &&
+                st.timeout_reason.find("trajectory_action=") == std::string::npos,
+            "STARTUP_READY_timeout_gripper");
+    }
+    {
+      StartupMock m;
+      auto stale = snapFrom(kStep12cHomeRad);
+      stale.age_sec = 1.0;
+      m.joints = stale;
+      auto st = waitForStartupInterfaces(ready_cfg, m.hooks(), 0.35);
+      check(!st.allReady() && st.received_joint_msg && !st.joints_ready &&
+                st.joints_reason.find("stale") != std::string::npos,
+            "STARTUP_READY_stale_not_accepted");
+    }
+    {
+      StartupMock m;
+      JointSnapshot missing = snapFrom(kStep12cHomeRad);
+      missing.joints.erase("j3");
+      m.joints = missing;
+      auto st = waitForStartupInterfaces(ready_cfg, m.hooks(), 0.35);
+      check(!st.allReady() && st.received_joint_msg && !st.joints_ready &&
+                st.joints_reason.find(kErrorMissingJoint) != std::string::npos,
+            "STARTUP_READY_missing_j3_not_accepted");
+    }
+    {
+      std::string fresh_error;
+      auto fresh = snapFrom(kStep12cHomeRad);
+      check(snapshotFresh(fresh, 0.5, fresh_error), "STARTUP_READY_freshness_unchanged_pass");
+      auto stale = snapFrom(kStep12cHomeRad);
+      stale.age_sec = 0.51;
+      check(!snapshotFresh(stale, 0.5, fresh_error) &&
+                checkSegmentStart(fresh, dummy.segments[1], 0.02).ok &&
+                !checkSegmentStart(snapFrom(home_bad_vals), dummy.segments[1], 0.02).ok,
+            "STARTUP_READY_does_not_relax_freshness_or_start_tolerance");
+    }
   }
 
   std::cout << "passed=" << g_passes << " failed=" << g_fails << "\n";
