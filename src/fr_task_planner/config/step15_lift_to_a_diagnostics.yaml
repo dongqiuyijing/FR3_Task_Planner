@@ -1,0 +1,156 @@
+status: FAIL
+task_version: STEP15
+failure_classification: NO_FEASIBLE_CANDIDATE_UNDER_J1_LIMIT
+path_improvement_verified: NO
+offline_review_only: true
+ready_for_real_execution: NO
+first_feasible_stop: true
+max_lift_to_a_j1_travel_rad: 0.50000000000000000
+max_a_to_b_proximal_travel_rad: 0.40000000000000002
+max_a_to_b_j5_travel_rad: 0.90000000000000002
+a_to_b_prefer_j6: YES
+note_j1_limit: offline search target, not a manufacturer certified threshold
+baseline_preserved: YES
+step12c_winner_sha256_before: 4711d4b374e955d30a1154bf44a54ca520ee47a5f17158db93913fc9a85dc5bd
+step12c_winner_sha256_after: 4711d4b374e955d30a1154bf44a54ca520ee47a5f17158db93913fc9a85dc5bd
+step12c_trajectory_sha256_before: 2689d683b1f90f617834437defbf5aef237060589f05e4679a09f4c51fe1ea11
+step12c_trajectory_sha256_after: 2689d683b1f90f617834437defbf5aef237060589f05e4679a09f4c51fe1ea11
+step14_winner_sha256_before: 5475647e9581a5268399a61ec3e8fe248a0f8049ce1584b8a112c59143c54497
+step14_winner_sha256_after: 5475647e9581a5268399a61ec3e8fe248a0f8049ce1584b8a112c59143c54497
+step14_trajectory_sha256_before: d4e3ba36a9473fef247aaf001d336c077ce314389037d26f8e0ed1d0e2575003
+step14_trajectory_sha256_after: d4e3ba36a9473fef247aaf001d336c077ce314389037d26f8e0ed1d0e2575003
+step14_diag_sha256_before: 40793752e3c50650a0e47636bab9b4c441b6053d2736b4ea4b3a134d4a5fa1ae
+step14_diag_sha256_after: 40793752e3c50650a0e47636bab9b4c441b6053d2736b4ea4b3a134d4a5fa1ae
+locked_pre_id: ik_1
+locked_a_id: ik_1
+locked_pre_j1: -2.15575750217955431
+locked_a_j1: -1.73065627720654613
+a_tcp_position: [-0.14892135616586100, -0.28284271100271530, -0.09999999996220973]
+a_tcp_orientation_xyzw: [-0.70710672348456927, 0.70710683888852188, 0.00000000019813823, 0.00000000001150610]
+old_step12c_b_tcp_position: [-0.14892135592906530, -0.28284271236929992, -0.09999999957041081]
+b_tcp_position: [-0.14892135592906530, -0.28284271236929992, -0.09999999957041081]
+b_tcp_orientation_xyzw: [0.66446307845118535, 0.66446296953458905, -0.24184478327230627, 0.24184474419846669]
+c_tcp_position: [-0.15892077868036281, -0.28284246356334497, -0.09999979885492082]
+c_tcp_orientation_xyzw: [-0.47771437897969971, 0.52133383482209017, -0.47771446842878179, 0.52133376203689452]
+pregrasp_ik_unique: 4
+pregrasp_ik_valid: 4
+a_ik_unique: 4
+a_ik_valid: 4
+a_visibility_ok: 4
+b_ik_unique: 3
+b_visible: 3
+b_endpoint_j1_ok: 3
+c_ik_runs: 3
+c_endpoint_j1_ok: 0
+full_combinations_tested: 0
+full_combinations_feasible: 0
+search_elapsed_sec: 13.14169965700000020
+search_timeout_sec: 900.00000000000000000
+timed_out: false
+fixed_bc_tcp_locked: NO
+b_tcp_pose_locked: NO
+b_face_center_locked: YES
+c_tcp_pose_locked: NO
+c_face_center_locked: YES
+bc_joint_ik_unlocked: YES
+a_tcp_pose_locked: YES
+pilz_lin_preserved: YES
+real_robot_commands: 0
+gripper_commands: 0
+execution: false
+prefix_plan_ok: true
+prefix_home_to_pregrasp_j1: 0.11566976508669047
+prefix_lift_to_a_j1_if_unplanned: n/a
+old_home_to_pregrasp_present: true
+old_home_to_pregrasp_j1_start: -2.27132925713690303
+old_home_to_pregrasp_j1_end: -2.15582377047185680
+old_home_to_pregrasp_j1_net_displacement: 0.11550548666504623
+old_home_to_pregrasp_j1_cumulative_travel: 0.11550548666504623
+old_home_to_pregrasp_all_joint_path_length: 3.63311709573515973
+old_home_to_pregrasp_duration: 2.51332231600000000
+old_pregrasp_to_grasp_present: true
+old_pregrasp_to_grasp_j1_start: -2.15582377047185680
+old_pregrasp_to_grasp_j1_end: -2.31706068426245038
+old_pregrasp_to_grasp_j1_net_displacement: 0.16123691379059357
+old_pregrasp_to_grasp_j1_cumulative_travel: 0.16123691379059357
+old_pregrasp_to_grasp_all_joint_path_length: 0.62113359759056885
+old_pregrasp_to_grasp_duration: 0.37706238600000003
+old_grasp_to_lift_present: true
+old_grasp_to_lift_j1_start: -2.31706068426245038
+old_grasp_to_lift_j1_end: -2.15575750364022234
+old_grasp_to_lift_j1_net_displacement: 0.16130318062222804
+old_grasp_to_lift_j1_cumulative_travel: 0.16130318062222804
+old_grasp_to_lift_all_joint_path_length: 0.62095740539676869
+old_grasp_to_lift_duration: 0.37712364800000003
+old_lift_to_a_present: true
+old_lift_to_a_j1_start: -2.15575750364022234
+old_lift_to_a_j1_end: 0.76145325180969869
+old_lift_to_a_j1_net_displacement: 2.91721075544992114
+old_lift_to_a_j1_cumulative_travel: 2.91721075544992114
+old_lift_to_a_all_joint_path_length: 12.95087814147749050
+old_lift_to_a_duration: 3.73777763799999985
+old_a_to_b_present: true
+old_a_to_b_j1_start: 0.76145325180969869
+old_a_to_b_j1_end: 0.12891394606516982
+old_a_to_b_j1_net_displacement: 0.63253930574452888
+old_a_to_b_j1_cumulative_travel: 0.63253930574452888
+old_a_to_b_all_joint_path_length: 5.40027799933085717
+old_a_to_b_duration: 3.19234607900000000
+old_b_to_c_present: true
+old_b_to_c_j1_start: 0.12891394606516982
+old_b_to_c_j1_end: 0.39843576101012212
+old_b_to_c_j1_net_displacement: 0.26952181494495231
+old_b_to_c_j1_cumulative_travel: 0.26952181494495231
+old_b_to_c_all_joint_path_length: 5.51628549698478032
+old_b_to_c_duration: 2.86486802499999982
+old_full_j1_travel: 4.25731745721726984
+old_full_home_to_c_time: 13.06250009200000051
+best_attempt_a_to_b_j1: -1.00000000000000000
+best_attempt_a_to_b_id: none
+best_attempt_b_to_c_j1: -1.00000000000000000
+best_attempt_b_to_c_id: none
+b_near_empty: false
+attempted_combinations:
+a_ik_candidates:
+  - id: baseline_frozen_pregrasp
+    valid: true
+    baseline: true
+    joints: [0.761386084000, -0.642747728000, 1.360379768000, 0.853167960000, 1.570792654000, -0.024008243000]
+    j1: 0.76138608399999996
+    fk_position_error: 0.00000000000000000
+    fk_orientation_error_deg: 0.00000000000000000
+    collision_free: true
+    attached_object_present: true
+    failure_reason: ok
+  - id: ik_1
+    valid: true
+    baseline: false
+    joints: [-1.730656277207, -2.096079391780, -2.361344111718, -0.254961774163, 1.570792667640, -2.516050604161]
+    j1: -1.73065627720654613
+    fk_position_error: 0.00000001924727335
+    fk_orientation_error_deg: 0.00000000000000000
+    collision_free: true
+    attached_object_present: true
+    failure_reason: ok
+  - id: ik_2
+    valid: true
+    baseline: false
+    joints: [-1.730656272879, -2.498844922888, -1.360379772640, -3.994760612034, -1.570792652133, 0.625534707554]
+    j1: -1.73065627287863011
+    fk_position_error: 0.00000000133888632
+    fk_orientation_error_deg: 0.00000000000000000
+    collision_free: true
+    attached_object_present: true
+    failure_reason: ok
+  - id: ik_3
+    valid: true
+    baseline: false
+    joints: [-1.730656269903, -4.087656490164, 2.361344038109, -2.986072855452, 1.570792653337, -2.516050596905]
+    j1: -1.73065626990343824
+    fk_position_error: 0.00000000226051952
+    fk_orientation_error_deg: 0.00000000000000000
+    collision_free: true
+    attached_object_present: true
+    failure_reason: ok
+winner_output_path: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step15_optimized_lift_to_a_winner.yaml
+trajectory_output_path: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step15_optimized_lift_to_a_trajectory.yaml

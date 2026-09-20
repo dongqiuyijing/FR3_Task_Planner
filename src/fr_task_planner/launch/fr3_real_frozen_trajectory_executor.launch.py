@@ -60,6 +60,7 @@ def _discover_gripper() -> dict:
     discovered = {
         "gripper_service_name": "/fairino_gripper/command",
         "gripper_id": 1,
+        "gripper_open_position": 0,
         "gripper_close_position": 85,
         "gripper_velocity": 20,
         "gripper_force": 20,
@@ -83,6 +84,7 @@ def _discover_gripper() -> dict:
         {
             "gripper_service_name": str(real.get("service_name", "/fairino_gripper/command")),
             "gripper_id": int(block.get("id", 1)),
+            "gripper_open_position": int(real.get("open_position", 0)),
             "gripper_close_position": int(real.get("close_position", 85)),
             "gripper_velocity": int(real.get("velocity", 20)),
             "gripper_force": int(real.get("force", 20)),
@@ -156,6 +158,7 @@ def _launch_nodes(context, *args, **kwargs):
         ),
         "gripper_config_source": gripper["source"],
         "gripper_id": int(gripper.get("gripper_id", 1)),
+        "gripper_open_position": int(gripper.get("gripper_open_position", 0)),
         "gripper_close_position": int(gripper.get("gripper_close_position", 85)),
         "gripper_velocity": int(gripper.get("gripper_velocity", 20)),
         "gripper_force": int(gripper.get("gripper_force", 20)),
@@ -222,7 +225,7 @@ def generate_launch_description():
             DeclareLaunchArgument("execute", default_value="false"),
             DeclareLaunchArgument("plan_current_to_home", default_value="false"),
             DeclareLaunchArgument("trajectory_file", default_value=default_traj),
-            DeclareLaunchArgument("trajectory_speed_scale", default_value="0.05"),
+            DeclareLaunchArgument("trajectory_speed_scale", default_value="0.2"),
             DeclareLaunchArgument("home_tolerance_rad", default_value="0.02"),
             DeclareLaunchArgument("segment_start_tolerance_rad", default_value="0.02"),
             DeclareLaunchArgument("segment_end_tolerance_rad", default_value="0.02"),
@@ -235,6 +238,15 @@ def generate_launch_description():
             DeclareLaunchArgument("gripper_post_close_wait_sec", default_value="0.5"),
             DeclareLaunchArgument("gripper_ping_only", default_value="false"),
             DeclareLaunchArgument("real_robot_confirmation", default_value=""),
+            LogInfo(
+                msg=[
+                    "STEP13 gripper sequencing: Home settle -> open(position=0) -> ",
+                    "wait bridge motion done -> Home_to_PreGrasp. ",
+                    "Grasp settle -> close -> wait GetGripperMotionDone/ServoJ resume -> ",
+                    "Attach -> Lift. Open/close never sent unless execute:=true. ",
+                    "Before Home open: confirm fingers/area are clear; opening can drop a held object.",
+                ]
+            ),
             OpaqueFunction(function=_launch_nodes),
         ]
     )

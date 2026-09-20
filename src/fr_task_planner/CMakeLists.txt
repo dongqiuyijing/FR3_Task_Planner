@@ -26,6 +26,21 @@ find_package(control_msgs REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(fairino_msgs REQUIRED)
 
+# DUAL-1: read-only dual-arm model test
+add_executable(
+  dual_model_smoke
+  src/dual_model_smoke.cpp
+)
+
+ament_target_dependencies(
+  dual_model_smoke
+  rclcpp
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  moveit_task_constructor_core
+)
+
 add_executable(fr3_mtc_smoke_test src/mtc_fr3_smoke_test.cpp)
 ament_target_dependencies(fr3_mtc_smoke_test
   rclcpp
@@ -263,6 +278,7 @@ ament_target_dependencies(fr_task_planner_trajectory
 add_executable(fr3_mtc_complete_abc_search src/mtc_fr3_complete_abc_search.cpp)
 target_include_directories(fr3_mtc_complete_abc_search PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 target_link_libraries(fr3_mtc_complete_abc_search
   fr_task_planner_endpoints
@@ -346,6 +362,61 @@ target_compile_definitions(test_step14_grasp_prefix PRIVATE
   FR_TASK_PLANNER_STEP14_DIAG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step14_grasp_optimization_diagnostics.yaml"
 )
 
+add_executable(test_step15_lift_to_a test/test_step15_lift_to_a.cpp)
+target_include_directories(test_step15_lift_to_a PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_step15_lift_to_a
+  fr_task_planner_endpoints
+  fr_task_planner_trajectory
+  yaml-cpp
+)
+ament_target_dependencies(test_step15_lift_to_a
+  rclcpp
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  geometric_shapes
+)
+target_compile_definitions(test_step15_lift_to_a PRIVATE
+  FR_TASK_PLANNER_STEP12C_TRAJ_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step12c_tilted_camera_winner_trajectory.yaml"
+  FR_TASK_PLANNER_STEP12C_WINNER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step12c_tilted_camera_winner.yaml"
+  FR_TASK_PLANNER_STEP14_TRAJ_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step14_optimized_grasp_trajectory.yaml"
+  FR_TASK_PLANNER_STEP14_WINNER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step14_optimized_grasp_winner.yaml"
+  FR_TASK_PLANNER_STEP14_DIAG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step14_grasp_optimization_diagnostics.yaml"
+  FR_TASK_PLANNER_STEP15_TRAJ_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step15_optimized_lift_to_a_trajectory.yaml"
+  FR_TASK_PLANNER_STEP15_WINNER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step15_optimized_lift_to_a_winner.yaml"
+)
+
+add_executable(
+  dual_arm_a_prefix_plan
+  src/dual_arm_a_prefix_plan.cpp
+)
+
+target_link_libraries(
+  dual_arm_a_prefix_plan
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_arm_a_prefix_plan
+  rclcpp
+  moveit_core
+  moveit_ros_planning_interface
+)
+
+add_executable(
+  dual_arm_b_plan
+  src/dual_arm_b_plan.cpp
+)
+
+ament_target_dependencies(
+  dual_arm_b_plan
+  rclcpp
+  moveit_core
+  moveit_ros_planning_interface
+)
+
 install(TARGETS
   fr3_mtc_smoke_test
   fr3_mtc_pregrasp_test
@@ -365,6 +436,15 @@ install(TARGETS
   fr3_real_frozen_trajectory_executor
   test_fr3_frozen_executor
   test_step14_grasp_prefix
+  test_step15_lift_to_a
+  dual_model_smoke
+  dual_arm_a_prefix_plan
+  dual_arm_b_plan
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(PROGRAMS
+  scripts/step15_sim_playback.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

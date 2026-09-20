@@ -152,12 +152,14 @@ class Step13GripperLaunchTest(unittest.TestCase):
         self.assertIn("gripper_rot_num", text)
         self.assertIn("gripper_rot_vel", text)
         self.assertIn("gripper_rot_torque", text)
+        self.assertIn("open(position=0)", text)
         self.assertNotIn("ActGripper", text)
 
     def test_local_executor_yaml_rot_defaults_match_python(self) -> None:
         path = os.path.join(_PKG, "config", "fr3_real_executor.yaml")
         data = _load(path)
         self.assertEqual(int(data["gripper_id"]), 1)
+        self.assertEqual(int(data["gripper_open_position"]), 0)
         self.assertEqual(int(data["gripper_close_position"]), 85)
         self.assertEqual(int(data["gripper_velocity"]), 20)
         self.assertEqual(int(data["gripper_force"]), 20)

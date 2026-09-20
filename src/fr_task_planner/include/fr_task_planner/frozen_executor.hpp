@@ -26,11 +26,17 @@ inline constexpr const char* kErrorSegmentEndMismatch = "SEGMENT_END_STATE_MISMA
 inline constexpr const char* kErrorSegmentEndSettleTimeout = "SEGMENT_END_SETTLE_TIMEOUT";
 inline constexpr const char* kErrorHomeSettleTimeout = "HOME_SETTLE_TIMEOUT";
 inline constexpr const char* kErrorGripperCloseFailed = "REAL_GRIPPER_CLOSE_FAILED";
+inline constexpr const char* kErrorGripperOpenFailed = "REAL_GRIPPER_OPEN_FAILED";
 inline constexpr const char* kErrorGripperServiceUnavailable = "GRIPPER_SERVICE_UNAVAILABLE";
 inline constexpr const char* kErrorGripperServiceTimeout = "GRIPPER_SERVICE_TIMEOUT";
 inline constexpr const char* kErrorGripperNullResponse = "GRIPPER_NULL_RESPONSE";
 inline constexpr const char* kErrorGripperBridgeError = "GRIPPER_BRIDGE_ERROR";
 inline constexpr const char* kErrorGripperPingFailed = "GRIPPER_PING_FAILED";
+inline constexpr const char* kErrorGripperMotionPending = "GRIPPER_MOTION_PENDING";
+inline constexpr const char* kErrorGripperMotionDoneTimeout = "GRIPPER_MOTION_DONE_TIMEOUT";
+inline constexpr const char* kErrorGripperServoJResumeFailed = "GRIPPER_SERVOJ_RESUME_FAILED";
+inline constexpr const char* kErrorGripperCompletionUnknown = "GRIPPER_COMPLETION_UNKNOWN";
+inline constexpr const char* kGripperBridgeMotionDoneMessage = "MoveGripper done";
 inline constexpr const char* kGripperCommandMove = "move";
 inline constexpr const char* kGripperCommandPing = "ping";
 inline constexpr const char* kErrorSimTimeInvalid = "REAL_EXECUTION_SIM_TIME_INVALID";
@@ -54,6 +60,8 @@ enum class ExecutorPhase
   GRIPPER_PING_PREFLIGHT,
   EXECUTE_CURRENT_TO_HOME,
   VERIFY_HOME,
+  OPEN_REAL_GRIPPER,
+  WAIT_GRIPPER_OPEN_DONE,
   LOAD_FROZEN_TRAJECTORY,
   VERIFY_FROZEN_START,
   EXECUTE_HOME_TO_PREGRASP,
@@ -61,7 +69,8 @@ enum class ExecutorPhase
   EXECUTE_PREGRASP_TO_GRASP,
   VERIFY_GRASP,
   CLOSE_REAL_GRIPPER,
-  VERIFY_GRIPPER,
+  WAIT_GRIPPER_CLOSE_DONE,
+  VERIFY_GRIPPER_CLOSED,
   ATTACH_PLANNING_SCENE_OBJECT,
   EXECUTE_GRASP_TO_LIFT,
   VERIFY_LIFT,
@@ -98,6 +107,7 @@ struct ExecutorConfig
   double gripper_timeout_sec = 15.0;
   double gripper_post_close_wait_sec = 0.5;
   int gripper_id = 1;
+  int gripper_open_position = 0;
   int gripper_close_position = 85;
   int gripper_velocity = 20;
   int gripper_force = 20;
@@ -164,12 +174,27 @@ struct ScaleResult
   TrajectorySegmentRecord segment;
 };
 
+enum class GripperCompletionKind
+{
+  CommandAccepted,
+  BridgeMotionDone,
+  MotionPending,
+  MotionDoneTimeout,
+  ServoJResumeFailure,
+  Unknown
+};
+
 struct SendResult
 {
   bool attempted = false;
   bool sent = false;
   bool success = false;
   std::string error;
+  int error_code = 0;
+  std::string message;
+  double elapsed_sec = 0.0;
+  bool response_received = false;
+  GripperCompletionKind gripper_completion = GripperCompletionKind::Unknown;
 };
 
 struct GripperBridgeRequestFields
@@ -223,6 +248,7 @@ struct ExecutorHooks
   std::function<PlanResult()> planCurrentToHome;
   std::function<SendResult(const std::string& logical, const TrajectorySegmentRecord& scaled)>
       sendSegment;
+  std::function<SendResult()> openGripper;
   std::function<SendResult()> closeGripper;
   std::function<SendResult()> pingGripper;
   std::function<SendResult()> attachObject;
@@ -253,8 +279,11 @@ struct ExecutorTrace
   int current_to_home_plans = 0;
   int current_to_home_executes = 0;
   int frozen_replans = 0;
+  bool gripper_open_before_pregrasp = false;
   bool gripper_before_attach = false;
+  bool gripper_close_before_lift = false;
   bool attach_before_lift = false;
+  GripperCompletionKind last_gripper_completion = GripperCompletionKind::Unknown;
   bool used_frozen_current_to_home = false;
   double original_duration = 0.0;
   double scaled_duration = 0.0;
@@ -300,13 +329,20 @@ SettleResult waitForJointConvergence(const std::string& segment,
                                      const ExecutorConfig& cfg, ExecutorHooks hooks);
 
 GripperBridgeRequestFields makeGripperCloseRequest(const ExecutorConfig& cfg);
+GripperBridgeRequestFields makeGripperOpenRequest(const ExecutorConfig& cfg);
 GripperBridgeRequestFields makeGripperPingRequest(const ExecutorConfig& cfg);
 std::string formatGripperRequestLog(const GripperBridgeRequestFields& req);
 std::string formatGripperResponseLog(int error_code, const std::string& message, double elapsed_sec,
                                      bool response_received);
+std::string gripperCompletionName(GripperCompletionKind kind);
 GripperCallOutcome classifyGripperCall(bool service_available, bool timed_out, bool null_response,
                                        int error_code, const std::string& message,
                                        double elapsed_sec, const char* nonzero_prefix);
+GripperCompletionKind classifyGripperCompletion(const GripperCallOutcome& call,
+                                                const GripperBridgeRequestFields& req);
+bool gripperBridgeMotionDone(GripperCompletionKind kind);
+std::string formatGripperCompletionFailure(const GripperCallOutcome& call,
+                                           GripperCompletionKind kind, const char* prefix);
 
 ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajectory& traj,
                                 ExecutorHooks hooks);

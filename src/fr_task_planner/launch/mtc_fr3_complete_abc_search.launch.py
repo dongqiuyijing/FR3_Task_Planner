@@ -178,6 +178,9 @@ def _launch_nodes(context, *args, **kwargs):
     params["optimize_grasp_prefix"] = (
         LaunchConfiguration("optimize_grasp_prefix").perform(context).lower() == "true"
     )
+    params["optimize_lift_to_a"] = (
+        LaunchConfiguration("optimize_lift_to_a").perform(context).lower() == "true"
+    )
     if params["optimize_grasp_prefix"]:
         frozen_winner = os.path.expanduser(
             "~/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_winner.yaml"
@@ -203,6 +206,47 @@ def _launch_nodes(context, *args, **kwargs):
                 "~/fr_task_ws/src/fr_task_planner/config/"
                 "step14_grasp_optimization_diagnostics.yaml"
             )
+    if params["optimize_lift_to_a"]:
+        protected = [
+            os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_winner.yaml"
+            ),
+            os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/"
+                "step12c_tilted_camera_winner_trajectory.yaml"
+            ),
+            os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/step14_optimized_grasp_winner.yaml"
+            ),
+            os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/"
+                "step14_optimized_grasp_trajectory.yaml"
+            ),
+            os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/"
+                "step14_grasp_optimization_diagnostics.yaml"
+            ),
+        ]
+        if os.path.abspath(params["winner_output_path"]) in {
+            os.path.abspath(p) for p in protected
+        }:
+            params["winner_output_path"] = os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/"
+                "step15_optimized_lift_to_a_winner.yaml"
+            )
+        if os.path.abspath(params["trajectory_output_path"]) in {
+            os.path.abspath(p) for p in protected
+        }:
+            params["trajectory_output_path"] = os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/"
+                "step15_optimized_lift_to_a_trajectory.yaml"
+            )
+        if os.path.abspath(params["diagnostic_output_path"]) in {
+            os.path.abspath(p) for p in protected
+        }:
+            params["diagnostic_output_path"] = os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/step15_lift_to_a_diagnostics.yaml"
+            )
     params["max_pregrasp_ik_candidates"] = int(
         LaunchConfiguration("max_pregrasp_ik_candidates").perform(context)
     )
@@ -224,6 +268,18 @@ def _launch_nodes(context, *args, **kwargs):
     )
     params["step14_full_planning_time"] = float(
         LaunchConfiguration("step14_full_planning_time").perform(context)
+    )
+    params["max_a_ik_candidates"] = int(
+        LaunchConfiguration("max_a_ik_candidates").perform(context)
+    )
+    params["max_a_ik_per_prefix"] = int(
+        LaunchConfiguration("max_a_ik_per_prefix").perform(context)
+    )
+    params["max_lift_to_a_j1_travel_rad"] = float(
+        LaunchConfiguration("max_lift_to_a_j1_travel_rad").perform(context)
+    )
+    params["step15_search_timeout_sec"] = float(
+        LaunchConfiguration("step15_search_timeout_sec").perform(context)
     )
     params["frozen_trajectory_path"] = LaunchConfiguration("frozen_trajectory_path").perform(
         context
@@ -410,12 +466,17 @@ def generate_launch_description():
             DeclareLaunchArgument("trajectory_output_path", default_value=default_traj),
             DeclareLaunchArgument("winner_replay_only", default_value="false"),
             DeclareLaunchArgument("optimize_grasp_prefix", default_value="false"),
+            DeclareLaunchArgument("optimize_lift_to_a", default_value="false"),
             DeclareLaunchArgument("max_pregrasp_ik_candidates", default_value="24"),
             DeclareLaunchArgument("max_prefix_plan_candidates", default_value="12"),
             DeclareLaunchArgument("max_full_task_candidates", default_value="6"),
             DeclareLaunchArgument("full_candidate_plan_attempts", default_value="3"),
             DeclareLaunchArgument("max_ik_attempts", default_value="96"),
+            DeclareLaunchArgument("max_a_ik_candidates", default_value="16"),
+            DeclareLaunchArgument("max_a_ik_per_prefix", default_value="4"),
+            DeclareLaunchArgument("max_lift_to_a_j1_travel_rad", default_value="0.5"),
             DeclareLaunchArgument("step14_search_timeout_sec", default_value="900.0"),
+            DeclareLaunchArgument("step15_search_timeout_sec", default_value="900.0"),
             DeclareLaunchArgument("step14_prefix_planning_time", default_value="5.0"),
             DeclareLaunchArgument("step14_full_planning_time", default_value="8.0"),
             DeclareLaunchArgument(

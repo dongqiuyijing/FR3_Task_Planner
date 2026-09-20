@@ -13,6 +13,7 @@ controller_joint_names: [j1, j2, j3, j4, j5, j6]
 
 gripper_service_name: /fairino_gripper/command
 gripper_id: 1
+gripper_open_position: 0
 gripper_close_position: 85
 gripper_velocity: 20
 gripper_force: 20

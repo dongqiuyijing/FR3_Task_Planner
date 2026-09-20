@@ -65,8 +65,10 @@ using fr_task_planner::EndpointGenerationConfig;
 using fr_task_planner::filterRollsByView;
 using fr_task_planner::fixedInspectionDesignCamera;
 using fr_task_planner::generatePreGraspIkCandidates;
+using fr_task_planner::isSameIkBranch;
 using fr_task_planner::generateValidEndpointCandidates;
 using fr_task_planner::GeometricVisibilityResult;
+using fr_task_planner::jointAbsTravel;
 using fr_task_planner::jointL1;
 using fr_task_planner::jointL2;
 using fr_task_planner::jointsFromState;
@@ -76,7 +78,9 @@ using fr_task_planner::PreGraspIkConfig;
 using fr_task_planner::PreGraspIkGenerationResult;
 using fr_task_planner::kArmJoints;
 using fr_task_planner::maxJointError;
+using fr_task_planner::isoToPose;
 using fr_task_planner::poseToIso;
+using fr_task_planner::IkValidationMode;
 using fr_task_planner::RollPose;
 using fr_task_planner::tcpInBase;
 using fr_task_planner::ViewGeom;
@@ -91,9 +95,13 @@ using fr_task_planner::extractArmPositions;
 using fr_task_planner::fillDerivedTotals;
 using fr_task_planner::firstLogicalSegment;
 using fr_task_planner::FrozenTaskMetrics;
+using fr_task_planner::LogicalMetrics;
 using fr_task_planner::isFixedDeployableLogical;
 using fr_task_planner::jointsToVec;
 using fr_task_planner::kStep12cPreGraspRad;
+using fr_task_planner::kStep12cARad;
+using fr_task_planner::kStep12cBRad;
+using fr_task_planner::kStep12cCRad;
 using fr_task_planner::lastLogicalSegment;
 using fr_task_planner::logicalMetrics;
 using fr_task_planner::kLogicalCurrentToHome;
@@ -1208,6 +1216,15 @@ bool targetsFrozenBaselineFile(const std::string& path)
          base == "step12c_tilted_camera_winner_trajectory.yaml";
 }
 
+bool targetsProtectedStep15BaselineFile(const std::string& path)
+{
+  const std::string base = fileBaseName(path);
+  return targetsFrozenBaselineFile(path) ||
+         base == "step14_optimized_grasp_winner.yaml" ||
+         base == "step14_optimized_grasp_trajectory.yaml" ||
+         base == "step14_grasp_optimization_diagnostics.yaml";
+}
+
 TrajectoryPointRecord recordFromPoint(const trajectory_msgs::msg::JointTrajectoryPoint& pt)
 {
   TrajectoryPointRecord rec;
@@ -1855,6 +1872,7 @@ struct GraspPlanOutcome
   std::map<std::string, double> pregrasp_joints;
   std::map<std::string, double> grasp_joints;
   std::map<std::string, double> lift_joints;
+  std::map<std::string, double> a_joints;
   double min_clearance = 0.0;
   bool collision_free = false;
   bool joint_limits_ok = false;
@@ -1865,24 +1883,27 @@ struct GraspPlanOutcome
 };
 
 void addFixedAbcStages(moveit::task_constructor::Task& task, const rclcpp::Node::SharedPtr& node,
-                       const std::string& group, const WinnerEndpoints& winner, double planning_time)
+                       const std::string& group, const WinnerEndpoints& winner, double planning_time,
+                       const std::map<std::string, double>* a_joints = nullptr,
+                       const std::map<std::string, double>* b_joints = nullptr,
+                       const std::map<std::string, double>* c_joints = nullptr)
 {
   auto ompl =
       std::make_shared<moveit::task_constructor::solvers::PipelinePlanner>(node, kOmplPipeline);
   ompl->setTimeout(planning_time);
   auto move_a = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo ViewA", ompl);
   move_a->setGroup(group);
-  move_a->setGoal(winner.a_rad);
+  move_a->setGoal(a_joints ? *a_joints : winner.a_rad);
   move_a->setTimeout(planning_time);
   task.add(std::move(move_a));
   auto move_b = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo ViewB", ompl);
   move_b->setGroup(group);
-  move_b->setGoal(winner.b_rad);
+  move_b->setGoal(b_joints ? *b_joints : winner.b_rad);
   move_b->setTimeout(planning_time);
   task.add(std::move(move_b));
   auto move_c = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo ViewC", ompl);
   move_c->setGroup(group);
-  move_c->setGoal(winner.c_rad);
+  move_c->setGoal(c_joints ? *c_joints : winner.c_rad);
   move_c->setTimeout(planning_time);
   task.add(std::move(move_c));
 }
@@ -1892,7 +1913,10 @@ GraspPlanOutcome evaluateMtcSolution(
     const std::string& ee_link, const geometry_msgs::msg::PoseStamped& pregrasp,
     const geometry_msgs::msg::PoseStamped& grasp, const geometry_msgs::msg::PoseStamped& lift,
     const WinnerEndpoints& winner, const std::map<std::string, double>& locked_pregrasp,
-    double pos_tol, double ori_tol_deg, const CollisionDiagConfig& dcfg)
+    double pos_tol, double ori_tol_deg, const CollisionDiagConfig& dcfg,
+    const geometry_msgs::msg::PoseStamped* locked_a_pose = nullptr,
+    const geometry_msgs::msg::PoseStamped* locked_b_pose = nullptr,
+    const geometry_msgs::msg::PoseStamped* locked_c_pose = nullptr)
 {
   GraspPlanOutcome out;
   std::string error;
@@ -1910,6 +1934,7 @@ GraspPlanOutcome evaluateMtcSolution(
   out.pregrasp_joints = stageEndJoints(leaves, "MoveTo PreGrasp");
   out.grasp_joints = stageEndJoints(leaves, "MoveTo Grasp");
   out.lift_joints = stageEndJoints(leaves, "MoveTo Lift");
+  out.a_joints = stageEndJoints(leaves, "MoveTo ViewA");
   out.pilz_lin = findStageSolution(leaves, "MoveTo Grasp") != nullptr &&
                  findStageSolution(leaves, "MoveTo Lift") != nullptr;
   if (!out.pilz_lin)
@@ -1944,6 +1969,18 @@ GraspPlanOutcome evaluateMtcSolution(
   out.joint_limits_ok = true;
   out.fk_ok = fk_stage("MoveTo PreGrasp", pregrasp) && fk_stage("MoveTo Grasp", grasp) &&
               fk_stage("MoveTo Lift", lift);
+  if (full && locked_a_pose)
+  {
+    out.fk_ok = out.fk_ok && fk_stage("MoveTo ViewA", *locked_a_pose);
+  }
+  if (full && locked_b_pose)
+  {
+    out.fk_ok = out.fk_ok && fk_stage("MoveTo ViewB", *locked_b_pose);
+  }
+  if (full && locked_c_pose)
+  {
+    out.fk_ok = out.fk_ok && fk_stage("MoveTo ViewC", *locked_c_pose);
+  }
   if (!out.fk_ok)
   {
     out.failure = "PREFIX_FK_FAILED";
@@ -1967,10 +2004,8 @@ GraspPlanOutcome evaluateMtcSolution(
       {
         continue;
       }
-      const size_t stride = std::max<size_t>(1, jt.points.size() / 8);
-      for (size_t i = 0; i < jt.points.size(); i += stride)
+      for (size_t idx = 0; idx < jt.points.size(); ++idx)
       {
-        const size_t idx = (i + stride >= jt.points.size()) ? (jt.points.size() - 1) : i;
         std::map<std::string, double> q;
         const size_t n = std::min(jt.joint_names.size(), jt.points[idx].positions.size());
         for (size_t k = 0; k < n; ++k)
@@ -2048,7 +2083,13 @@ GraspPlanOutcome planGraspCandidate(
     const geometry_msgs::msg::PoseStamped& lift, double object_height, double object_radius,
     double planning_time, const std::map<std::string, double>& home,
     const std::map<std::string, double>& locked_pregrasp, const WinnerEndpoints& winner, bool full,
-    int max_attempts, const CollisionDiagConfig& dcfg, double pos_tol, double ori_tol_deg)
+    int max_attempts, const CollisionDiagConfig& dcfg, double pos_tol, double ori_tol_deg,
+    const std::map<std::string, double>* a_joints = nullptr,
+    const geometry_msgs::msg::PoseStamped* locked_a_pose = nullptr,
+    const std::map<std::string, double>* b_joints = nullptr,
+    const std::map<std::string, double>* c_joints = nullptr,
+    const geometry_msgs::msg::PoseStamped* locked_b_pose = nullptr,
+    const geometry_msgs::msg::PoseStamped* locked_c_pose = nullptr)
 {
   GraspPlanOutcome last;
   for (int attempt = 1; attempt <= max_attempts && rclcpp::ok(); ++attempt)
@@ -2061,7 +2102,7 @@ GraspPlanOutcome planGraspCandidate(
                     home, &locked_pregrasp);
     if (full)
     {
-      addFixedAbcStages(task, node, group, winner, planning_time);
+      addFixedAbcStages(task, node, group, winner, planning_time, a_joints, b_joints, c_joints);
     }
     try
     {
@@ -2077,8 +2118,22 @@ GraspPlanOutcome planGraspCandidate(
       last.failure = full ? "FULL_TASK_PLAN_FAILED" : "PREFIX_PLAN_FAILED";
       continue;
     }
-    last = evaluateMtcSolution(task, full, group, ee_link, pregrasp, grasp, lift, winner,
-                               locked_pregrasp, pos_tol, ori_tol_deg, dcfg);
+    WinnerEndpoints scored = winner;
+    if (a_joints)
+    {
+      scored.a_rad = *a_joints;
+    }
+    if (b_joints)
+    {
+      scored.b_rad = *b_joints;
+    }
+    if (c_joints)
+    {
+      scored.c_rad = *c_joints;
+    }
+    last = evaluateMtcSolution(task, full, group, ee_link, pregrasp, grasp, lift, scored,
+                               locked_pregrasp, pos_tol, ori_tol_deg, dcfg, locked_a_pose,
+                               locked_b_pose, locked_c_pose);
     if (last.ok)
     {
       return last;
@@ -2563,6 +2618,8 @@ int runGraspPrefixOptimize(
   yaml << "gripper_commands: 0\n";
   return 4;
 }
+
+#include "step15_lift_to_a_search.inc"
 }  // namespace
 
 int main(int argc, char** argv)
@@ -2880,6 +2937,26 @@ int main(int argc, char** argv)
         node, group, ee_link, attach_link, object_id, table_name, touch_links, object_scene,
         pregrasp, grasp, lift, object_height, object_radius, planning_time, home, robot_model, viz,
         diag_path);
+    if (vis_hold > 0)
+    {
+      std::this_thread::sleep_for(std::chrono::duration<double>(vis_hold));
+    }
+    const auto after = waitForFreshJoints(node, std::chrono::seconds(3));
+    if (after)
+    {
+      RCLCPP_INFO(node->get_logger(), "Robot moved because of this node? %s",
+                  maxJointError(jointsFromMsg(*after), actual) > 0.02 ? "YES" : "NO");
+    }
+    shutdownSpinner(executor, spinner);
+    return rc;
+  }
+  if (getBool(node, "optimize_lift_to_a", false))
+  {
+    const int rc = runLiftToAOptimize(
+        node, group, ee_link, attach_link, object_id, table_name, column_name, touch_links,
+        object_scene, pregrasp, grasp, lift, object_height, object_radius, planning_time, home,
+        robot_model, viz, diag_path, pos_tol, ori_tol_deg, tcp_object, world_base, view_a, view_b,
+        view_c, p1, d1);
     if (vis_hold > 0)
     {
       std::this_thread::sleep_for(std::chrono::duration<double>(vis_hold));

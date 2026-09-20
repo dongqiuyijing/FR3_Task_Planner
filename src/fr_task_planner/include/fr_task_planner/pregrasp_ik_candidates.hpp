@@ -19,6 +19,12 @@ struct NamedJointSeed
   std::map<std::string, double> joints;
 };
 
+enum class IkValidationMode
+{
+  DetachedPreGrasp,
+  AttachedInspection
+};
+
 struct PreGraspIkConfig
 {
   std::string group = "fairino3_v6_group";
@@ -34,6 +40,7 @@ struct PreGraspIkConfig
   uint32_t max_ik_attempts = 96;
   double nearby_radius = 2.0;
   double nearby_radius_local = 0.8;
+  IkValidationMode mode = IkValidationMode::DetachedPreGrasp;
 };
 
 struct PreGraspIkCandidate

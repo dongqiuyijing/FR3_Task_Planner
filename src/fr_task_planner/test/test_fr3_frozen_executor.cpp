@@ -143,20 +143,88 @@ struct MockRobot
 {
   JointSnapshot joints = snapFrom(kStep12cHomeRad);
   bool gripper_ok = true;
+  bool open_ok = true;
+  bool open_pending = false;
+  bool close_pending = false;
+  bool servo_resume_fail = false;
   bool ping_ok = true;
   bool ping_enabled = false;
   bool attach_ok = true;
   bool restore_ok = true;
   bool controller_ok = true;
+  bool skip_joint_update = false;
   std::string fail_segment;
   int send_calls = 0;
   int gripper_calls = 0;
+  int open_calls = 0;
   int ping_calls = 0;
   int attach_calls = 0;
   std::vector<std::string> sent;
   std::vector<std::string> events;
   bool used_frozen_home = false;
   double time_sec = 0.0;
+  int open_error_code = 0;
+  int close_error_code = 0;
+  std::string open_message = kGripperBridgeMotionDoneMessage;
+  std::string close_message = kGripperBridgeMotionDoneMessage;
+  std::string open_error;
+  std::string close_error;
+
+  SendResult makeGripperMove(bool ok, bool pending, bool servo_fail, int error_code,
+                             const std::string& message, const std::string& error,
+                             const char* fallback)
+  {
+    SendResult r;
+    r.attempted = true;
+    r.sent = true;
+    r.response_received = true;
+    r.elapsed_sec = 1.2;
+    r.error_code = error_code;
+    r.message = message;
+    if (pending)
+    {
+      r.success = true;
+      r.error_code = 0;
+      r.message = "motion still pending";
+      r.gripper_completion = GripperCompletionKind::MotionPending;
+      return r;
+    }
+    if (servo_fail)
+    {
+      r.success = false;
+      r.error_code = error_code == 0 ? -1 : error_code;
+      r.message = "ServoMoveStart failed";
+      r.error = std::string(kErrorGripperServoJResumeFailed) + " " + r.message;
+      r.gripper_completion = GripperCompletionKind::ServoJResumeFailure;
+      return r;
+    }
+    if (!ok)
+    {
+      r.success = false;
+      r.error = error.empty() ? fallback : error;
+      r.error_code = error_code == 0 ? 123 : error_code;
+      if (r.message == kGripperBridgeMotionDoneMessage)
+      {
+        r.message = "MoveGripper failed";
+      }
+      if (r.error.find(kErrorGripperServiceTimeout) != std::string::npos ||
+          r.message.find("timeout") != std::string::npos)
+      {
+        r.gripper_completion = GripperCompletionKind::MotionDoneTimeout;
+        r.response_received = false;
+      }
+      else
+      {
+        r.gripper_completion = GripperCompletionKind::Unknown;
+      }
+      return r;
+    }
+    r.success = true;
+    r.error_code = 0;
+    r.message = kGripperBridgeMotionDoneMessage;
+    r.gripper_completion = GripperCompletionKind::BridgeMotionDone;
+    return r;
+  }
 
   ExecutorHooks hooks()
   {
@@ -182,28 +250,31 @@ struct MockRobot
       r.sent = true;
       r.success = true;
       sent.push_back(logical);
-      joints = snapFrom(seg.end_joints.empty() ? (seg.points.empty() ? kStep12cHomeRad :
-                                                                        extractArmPositions(seg.joint_names,
-                                                                                            seg.points.back().positions)) :
-                                                 extractArmPositions(seg.joint_names.empty() ?
-                                                                         std::vector<std::string>(kArmJoints.begin(),
-                                                                                                  kArmJoints.end()) :
-                                                                         seg.joint_names,
-                                                                     seg.end_joints));
+      if (!skip_joint_update)
+      {
+        joints = snapFrom(seg.end_joints.empty() ? (seg.points.empty() ? kStep12cHomeRad :
+                                                                          extractArmPositions(seg.joint_names,
+                                                                                              seg.points.back().positions)) :
+                                                   extractArmPositions(seg.joint_names.empty() ?
+                                                                           std::vector<std::string>(kArmJoints.begin(),
+                                                                                                    kArmJoints.end()) :
+                                                                           seg.joint_names,
+                                                                       seg.end_joints));
+      }
+      return r;
+    };
+    h.openGripper = [this]() {
+      SendResult r = makeGripperMove(open_ok, open_pending, false, open_error_code, open_message,
+                                     open_error, kErrorGripperOpenFailed);
+      ++open_calls;
+      events.push_back("OPEN_REAL_GRIPPER");
       return r;
     };
     h.closeGripper = [this]() {
-      SendResult r;
-      r.attempted = true;
+      SendResult r = makeGripperMove(gripper_ok, close_pending, servo_resume_fail, close_error_code,
+                                     close_message, close_error, kErrorGripperCloseFailed);
       ++gripper_calls;
       events.push_back("CLOSE_REAL_GRIPPER");
-      if (!gripper_ok)
-      {
-        r.error = kErrorGripperCloseFailed;
-        return r;
-      }
-      r.sent = true;
-      r.success = true;
       return r;
     };
     if (ping_enabled)
@@ -464,7 +535,7 @@ int main(int argc, char** argv)
   MockRobot robot;
   auto dry_trace = runFrozenExecutor(dry, dummy, robot.hooks());
   check(dry_trace.dry_run && dry_trace.ok && robot.send_calls == 0 &&
-            robot.gripper_calls == 0,
+            robot.gripper_calls == 0 && robot.open_calls == 0,
         "TEST16_execute_false_sends_nothing");
 
   ExecutorConfig exec_no_confirm;
@@ -501,7 +572,8 @@ int main(int argc, char** argv)
     }
   }
   check(t19.ok && t19.gripper_before_attach && grip_before_attach && robot4.gripper_calls == 1 &&
-            robot4.attach_calls == 1,
+            robot4.open_calls == 1 && robot4.attach_calls == 1 && t19.gripper_open_before_pregrasp &&
+            t19.gripper_close_before_lift,
         "TEST19_gripper_before_attach");
   bool lift_after_attach = false;
   for (const auto& s : t19.segments_sent)
@@ -760,7 +832,8 @@ int main(int argc, char** argv)
     ping_fail_robot.ping_ok = false;
     auto t_ping_fail = runFrozenExecutor(execCfg(), dummy, ping_fail_robot.hooks());
     check(t_ping_fail.aborted && ping_fail_robot.send_calls == 0 &&
-              ping_fail_robot.gripper_calls == 0 && ping_fail_robot.attach_calls == 0 &&
+              ping_fail_robot.gripper_calls == 0 && ping_fail_robot.open_calls == 0 &&
+              ping_fail_robot.attach_calls == 0 &&
               t_ping_fail.abort_reason.find(kErrorGripperPingFailed) != std::string::npos,
           "GRIPPER_F_ping_failure_blocks_sequence");
   }
@@ -770,8 +843,8 @@ int main(int argc, char** argv)
     MockRobot dry_robot;
     auto dry_g_trace = runFrozenExecutor(dry_g, dummy, dry_robot.hooks());
     check(dry_g_trace.dry_run && dry_g_trace.ok && dry_robot.send_calls == 0 &&
-              dry_robot.gripper_calls == 0 && dry_robot.ping_calls == 0 &&
-              dry_g_trace.gripper_commands_sent == 0,
+              dry_robot.gripper_calls == 0 && dry_robot.open_calls == 0 &&
+              dry_robot.ping_calls == 0 && dry_g_trace.gripper_commands_sent == 0,
           "GRIPPER_H_execute_false_zero_gripper_commands");
   }
   {
@@ -796,12 +869,173 @@ int main(int argc, char** argv)
               ping_req.gripper_id == 1 && ping_req.rot_num == 0.0 && ping_req.rot_vel == 0 &&
               ping_req.rot_torque == 0,
           "GRIPPER_I_request_fields_match_config");
+    auto open_req = makeGripperOpenRequest(cfg);
+    check(open_req.command == kGripperCommandMove && open_req.position == 0 &&
+              open_req.velocity == close_req.velocity && open_req.force == close_req.force &&
+              open_req.max_time_ms == close_req.max_time_ms && open_req.block == close_req.block,
+          "GRIPPER_I_open_request_position_0");
     const std::string req_log = formatGripperRequestLog(close_req);
     check(req_log.find("command=move") != std::string::npos &&
               req_log.find("rot_num=") != std::string::npos &&
               req_log.find("rot_vel=") != std::string::npos &&
               req_log.find("rot_torque=") != std::string::npos,
           "GRIPPER_I_request_log_includes_rot_fields");
+  }
+
+  auto hasSent = [](const std::vector<std::string>& sent, const char* logical) {
+    for (const auto& s : sent)
+    {
+      if (s == logical)
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+  auto hasPhase = [](const ExecutorTrace& t, const char* name) {
+    for (const auto& p : t.phases)
+    {
+      if (p == name)
+      {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.skip_joint_update = true;
+    auto cfg = execCfg();
+    cfg.joint_settle_timeout_sec = 0.35;
+    auto t = runFrozenExecutor(cfg, dummy, r.hooks());
+    check(t.aborted && r.open_calls == 0 && !hasSent(r.sent, kLogicalHomeToPreGrasp),
+          "HOME_OPEN_A_home_not_settled_skips_open");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.ok && r.open_calls == 1 && r.gripper_calls == 1 && t.gripper_open_before_pregrasp &&
+              hasPhase(t, "OPEN_REAL_GRIPPER") && hasPhase(t, "WAIT_GRIPPER_OPEN_DONE") &&
+              hasSent(r.sent, kLogicalHomeToPreGrasp) &&
+              t.last_gripper_completion == GripperCompletionKind::BridgeMotionDone,
+          "HOME_OPEN_B_home_settled_open_then_pregrasp");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.open_ok = false;
+    r.open_error = kErrorGripperServiceTimeout;
+    r.open_message = "GetGripperMotionDone timeout";
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.aborted && r.open_calls == 1 && !hasSent(r.sent, kLogicalHomeToPreGrasp) &&
+              t.abort_reason.find(kErrorGripperMotionDoneTimeout) != std::string::npos,
+          "HOME_OPEN_C_open_timeout_blocks_pregrasp");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.open_ok = false;
+    r.open_error_code = 7;
+    r.open_message = "MoveGripper failed";
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.aborted && r.open_calls == 1 && !hasSent(r.sent, kLogicalHomeToPreGrasp) &&
+              t.abort_reason.find("error_code=7") != std::string::npos &&
+              t.abort_reason.find("MoveGripper failed") != std::string::npos,
+          "HOME_OPEN_D_open_nonzero_error_blocks_pregrasp");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.open_pending = true;
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.aborted && r.open_calls == 1 && !hasSent(r.sent, kLogicalHomeToPreGrasp) &&
+              t.abort_reason.find(kErrorGripperMotionPending) != std::string::npos,
+          "HOME_OPEN_E_open_pending_blocks_pregrasp");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.fail_segment = kLogicalPreGraspToGrasp;
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.aborted && r.open_calls == 1 && r.gripper_calls == 0 && r.attach_calls == 0 &&
+              !hasSent(r.sent, kLogicalGraspToLift),
+          "GRASP_CLOSE_A_grasp_not_reached_skips_close");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.close_pending = true;
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.aborted && r.gripper_calls == 1 && r.attach_calls == 0 &&
+              !hasSent(r.sent, kLogicalGraspToLift) &&
+              t.abort_reason.find(kErrorGripperMotionPending) != std::string::npos &&
+              hasPhase(t, "CLOSE_REAL_GRIPPER") && !hasPhase(t, "WAIT_GRIPPER_CLOSE_DONE"),
+          "GRASP_CLOSE_B_success_but_pending_blocks_attach_and_lift");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.gripper_ok = false;
+    r.close_error = kErrorGripperServiceTimeout;
+    r.close_message = "GetGripperMotionDone timeout";
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.aborted && r.attach_calls == 0 && !hasSent(r.sent, kLogicalGraspToLift) &&
+              t.abort_reason.find(kErrorGripperMotionDoneTimeout) != std::string::npos,
+          "GRASP_CLOSE_C_close_timeout_blocks_attach_and_lift");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.gripper_ok = false;
+    r.close_error_code = 9;
+    r.close_message = "MoveGripper failed";
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.aborted && r.attach_calls == 0 && !hasSent(r.sent, kLogicalGraspToLift) &&
+              t.abort_reason.find("error_code=9") != std::string::npos,
+          "GRASP_CLOSE_D_close_nonzero_error_blocks_attach_and_lift");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.servo_resume_fail = true;
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.aborted && r.attach_calls == 0 && !hasSent(r.sent, kLogicalGraspToLift) &&
+              t.abort_reason.find(kErrorGripperServoJResumeFailed) != std::string::npos,
+          "GRASP_CLOSE_E_servoj_resume_failure_blocks_lift");
+  }
+  {
+    MockRobot r;
+    r.joints = snapFrom({ kStep12cHomeRad[0] + 0.1, kStep12cHomeRad[1], kStep12cHomeRad[2],
+                          kStep12cHomeRad[3], kStep12cHomeRad[4], kStep12cHomeRad[5] });
+    r.attach_ok = false;
+    auto t = runFrozenExecutor(execCfg(), dummy, r.hooks());
+    check(t.aborted && r.gripper_calls == 1 && r.attach_calls == 1 &&
+              !hasSent(r.sent, kLogicalGraspToLift),
+          "GRASP_CLOSE_F_attach_failure_blocks_lift");
+  }
+  {
+    auto done = classifyGripperCall(true, false, false, 0, kGripperBridgeMotionDoneMessage, 2.0,
+                                    kErrorGripperCloseFailed);
+    auto kind = classifyGripperCompletion(done, makeGripperCloseRequest(ExecutorConfig{}));
+    check(kind == GripperCompletionKind::BridgeMotionDone && gripperBridgeMotionDone(kind),
+          "GRIPPER_COMPLETION_move_done");
+    auto ping_call = classifyGripperCall(true, false, false, 0, "ok", 0.1, kErrorGripperPingFailed);
+    auto ping_kind = classifyGripperCompletion(ping_call, makeGripperPingRequest(ExecutorConfig{}));
+    check(ping_kind == GripperCompletionKind::CommandAccepted && !gripperBridgeMotionDone(ping_kind),
+          "GRIPPER_COMPLETION_ping_is_not_closed");
   }
 
   std::cout << "passed=" << g_passes << " failed=" << g_fails << "\n";

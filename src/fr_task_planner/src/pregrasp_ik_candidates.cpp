@@ -17,12 +17,14 @@ double boundedDisplacement(double from, double to)
   return std::abs(to - from);
 }
 
-void classifyPreGraspContacts(const CollisionSnapshot& snap, PreGraspIkCandidate& cand)
+void classifyPreGraspContacts(const CollisionSnapshot& snap, PreGraspIkCandidate& cand,
+                              IkValidationMode mode)
 {
   cand.self_collision_ok = true;
   cand.table_collision_ok = true;
   cand.column_collision_ok = true;
   bool part_robot = false;
+  bool part_non_touch = false;
   for (const auto& rec : snap.contacts)
   {
     if (rec.category == CollisionCategory::ROBOT_SELF)
@@ -37,14 +39,20 @@ void classifyPreGraspContacts(const CollisionSnapshot& snap, PreGraspIkCandidate
     {
       cand.column_collision_ok = false;
     }
-    else if (rec.category == CollisionCategory::PART_NON_TOUCH_ROBOT ||
-             rec.category == CollisionCategory::PART_TOUCH_ROBOT)
+    else if (rec.category == CollisionCategory::PART_NON_TOUCH_ROBOT)
+    {
+      part_non_touch = true;
+      part_robot = true;
+    }
+    else if (rec.category == CollisionCategory::PART_TOUCH_ROBOT)
     {
       part_robot = true;
     }
   }
+  const bool part_illegal =
+      (mode == IkValidationMode::AttachedInspection) ? part_non_touch : part_robot;
   cand.collision_free = !snap.collision && cand.self_collision_ok && cand.table_collision_ok &&
-                        cand.column_collision_ok && !part_robot;
+                        cand.column_collision_ok && !part_illegal;
 }
 
 bool tryIk(moveit::core::RobotState& state, const moveit::core::JointModelGroup* jmg,
@@ -153,7 +161,7 @@ void validatePreGraspCandidate(PreGraspIkCandidate& cand,
   dcfg.column_name = cfg.column_name;
   dcfg.touch_links = cfg.touch_links;
   const auto snap = collectCollisionContacts(*diag, dcfg);
-  classifyPreGraspContacts(snap, cand);
+  classifyPreGraspContacts(snap, cand, cfg.mode);
   cand.column_clearance = 0.0;
   collision_detection::DistanceRequest req;
   req.enable_signed_distance = true;
@@ -192,9 +200,13 @@ void validatePreGraspCandidate(PreGraspIkCandidate& cand,
   {
   }
 
-  if (cand.attached_object_present)
+  if (cfg.mode == IkValidationMode::DetachedPreGrasp && cand.attached_object_present)
   {
     cand.failure_reason = "object attached at pregrasp";
+  }
+  else if (cfg.mode == IkValidationMode::AttachedInspection && !cand.attached_object_present)
+  {
+    cand.failure_reason = "object not attached at inspection";
   }
   else if (!cand.bounds_ok)
   {
@@ -316,6 +328,7 @@ PreGraspIkGenerationResult generatePreGraspIkCandidates(
     {
       break;
     }
+    make_from_joints(seed.joints, seed.name + "_rawfk", false);
     moveit::core::RobotState exact = seed_state(seed);
     ++result.attempts;
     if (tryIk(exact, jmg, t_model_tcp, cfg.ee_link, 0.25))
@@ -411,10 +424,12 @@ PreGraspIkGenerationResult generatePreGraspIkCandidates(
     }
   }
   RCLCPP_INFO(logger,
-              "STEP14 IK attempts=%d ik_success=%d unique=%zu valid=%d baseline=%s min_j1=%.3f",
+              "IK attempts=%d ik_success=%d unique=%zu valid=%d baseline=%s min_j1=%.3f mode=%s",
               result.attempts, result.ik_success, result.unique.size(), result.unique_valid,
               result.baseline_included ? "YES" : "NO",
-              result.unique.empty() ? -1.0 : result.unique.front().j1_abs_displacement);
+              result.unique.empty() ? -1.0 : result.unique.front().j1_abs_displacement,
+              cfg.mode == IkValidationMode::AttachedInspection ? "attached_inspection" :
+                                                                 "detached_pregrasp");
   return result;
 }
 }  // namespace fr_task_planner

@@ -173,6 +173,10 @@ std::string phaseName(ExecutorPhase phase)
       return "EXECUTE_CURRENT_TO_HOME";
     case ExecutorPhase::VERIFY_HOME:
       return "VERIFY_HOME";
+    case ExecutorPhase::OPEN_REAL_GRIPPER:
+      return "OPEN_REAL_GRIPPER";
+    case ExecutorPhase::WAIT_GRIPPER_OPEN_DONE:
+      return "WAIT_GRIPPER_OPEN_DONE";
     case ExecutorPhase::LOAD_FROZEN_TRAJECTORY:
       return "LOAD_FROZEN_TRAJECTORY";
     case ExecutorPhase::VERIFY_FROZEN_START:
@@ -187,8 +191,10 @@ std::string phaseName(ExecutorPhase phase)
       return "VERIFY_GRASP";
     case ExecutorPhase::CLOSE_REAL_GRIPPER:
       return "CLOSE_REAL_GRIPPER";
-    case ExecutorPhase::VERIFY_GRIPPER:
-      return "VERIFY_GRIPPER";
+    case ExecutorPhase::WAIT_GRIPPER_CLOSE_DONE:
+      return "WAIT_GRIPPER_CLOSE_DONE";
+    case ExecutorPhase::VERIFY_GRIPPER_CLOSED:
+      return "VERIFY_GRIPPER_CLOSED";
     case ExecutorPhase::ATTACH_PLANNING_SCENE_OBJECT:
       return "ATTACH_PLANNING_SCENE_OBJECT";
     case ExecutorPhase::EXECUTE_GRASP_TO_LIFT:
@@ -278,12 +284,144 @@ GripperBridgeRequestFields makeGripperCloseRequest(const ExecutorConfig& cfg)
   return req;
 }
 
+GripperBridgeRequestFields makeGripperOpenRequest(const ExecutorConfig& cfg)
+{
+  GripperBridgeRequestFields req = makeGripperCloseRequest(cfg);
+  req.position = cfg.gripper_open_position;
+  return req;
+}
+
 GripperBridgeRequestFields makeGripperPingRequest(const ExecutorConfig& cfg)
 {
   GripperBridgeRequestFields req = makeGripperCloseRequest(cfg);
   req.command = kGripperCommandPing;
   req.position = 0;
   return req;
+}
+
+std::string gripperCompletionName(GripperCompletionKind kind)
+{
+  switch (kind)
+  {
+    case GripperCompletionKind::CommandAccepted:
+      return "COMMAND_ACCEPTED";
+    case GripperCompletionKind::BridgeMotionDone:
+      return "BRIDGE_MOTION_DONE";
+    case GripperCompletionKind::MotionPending:
+      return "MOTION_PENDING";
+    case GripperCompletionKind::MotionDoneTimeout:
+      return "MOTION_DONE_TIMEOUT";
+    case GripperCompletionKind::ServoJResumeFailure:
+      return "SERVOJ_RESUME_FAILURE";
+    case GripperCompletionKind::Unknown:
+      return "COMPLETION_UNKNOWN";
+  }
+  return "COMPLETION_UNKNOWN";
+}
+
+namespace
+{
+bool messageContains(const std::string& haystack, const char* needle)
+{
+  if (!needle || needle[0] == '\0')
+  {
+    return false;
+  }
+  return haystack.find(needle) != std::string::npos;
+}
+
+bool isMoveCommand(const GripperBridgeRequestFields& req)
+{
+  return req.command == kGripperCommandMove;
+}
+}  // namespace
+
+GripperCompletionKind classifyGripperCompletion(const GripperCallOutcome& call,
+                                                const GripperBridgeRequestFields& req)
+{
+  if (call.kind == GripperCallKind::Timeout)
+  {
+    return GripperCompletionKind::MotionDoneTimeout;
+  }
+  if (messageContains(call.error, "GetGripperMotionDone timeout") ||
+      messageContains(call.message, "GetGripperMotionDone timeout") ||
+      messageContains(call.error, "timed out waiting for motion done") ||
+      messageContains(call.message, "timed out waiting for motion done"))
+  {
+    return GripperCompletionKind::MotionDoneTimeout;
+  }
+  if (messageContains(call.error, "ServoMove") || messageContains(call.message, "ServoMove"))
+  {
+    return GripperCompletionKind::ServoJResumeFailure;
+  }
+  if (messageContains(call.error, "pending") || messageContains(call.message, "pending") ||
+      messageContains(call.error, "in motion") || messageContains(call.message, "in motion") ||
+      messageContains(call.message, "still pending"))
+  {
+    return GripperCompletionKind::MotionPending;
+  }
+  if (!isMoveCommand(req))
+  {
+    return call.ok ? GripperCompletionKind::CommandAccepted : GripperCompletionKind::Unknown;
+  }
+  if (!call.ok)
+  {
+    return GripperCompletionKind::Unknown;
+  }
+  if (messageContains(call.message, kGripperBridgeMotionDoneMessage) ||
+      messageContains(call.message, "MoveGripper done"))
+  {
+    return GripperCompletionKind::BridgeMotionDone;
+  }
+  if (call.message == "ok" || messageContains(call.message, "COMMAND_ACCEPTED"))
+  {
+    return GripperCompletionKind::CommandAccepted;
+  }
+  return GripperCompletionKind::Unknown;
+}
+
+bool gripperBridgeMotionDone(GripperCompletionKind kind)
+{
+  return kind == GripperCompletionKind::BridgeMotionDone;
+}
+
+std::string formatGripperCompletionFailure(const GripperCallOutcome& call,
+                                           GripperCompletionKind kind, const char* prefix)
+{
+  const char* head = (prefix && prefix[0] != '\0') ? prefix : kErrorGripperCloseFailed;
+  std::ostringstream oss;
+  oss.setf(std::ios::fixed);
+  oss.precision(3);
+  switch (kind)
+  {
+    case GripperCompletionKind::MotionPending:
+      oss << kErrorGripperMotionPending;
+      break;
+    case GripperCompletionKind::MotionDoneTimeout:
+      oss << kErrorGripperMotionDoneTimeout;
+      break;
+    case GripperCompletionKind::ServoJResumeFailure:
+      oss << kErrorGripperServoJResumeFailed;
+      break;
+    case GripperCompletionKind::CommandAccepted:
+      oss << kErrorGripperCompletionUnknown << " COMMAND_ACCEPTED_IS_NOT_MOTION_DONE";
+      break;
+    case GripperCompletionKind::Unknown:
+      oss << kErrorGripperCompletionUnknown;
+      break;
+    case GripperCompletionKind::BridgeMotionDone:
+      oss << head;
+      break;
+  }
+  oss << " " << head << " completion=" << gripperCompletionName(kind)
+      << " error_code=" << call.error_code << " message=\"" << call.message
+      << "\" elapsed_sec=" << call.elapsed_sec
+      << " response_received=" << (call.response_received ? "YES" : "NO");
+  if (!call.error.empty() && call.error != oss.str())
+  {
+    oss << " detail=\"" << call.error << "\"";
+  }
+  return oss.str();
 }
 
 std::string formatGripperRequestLog(const GripperBridgeRequestFields& req)
@@ -1019,10 +1157,13 @@ ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajec
                                         "DRY RUN ONLY; motion gate closed: " + reason);
   if (!trace.motion_enabled)
   {
+    trace.events.push_back("DRY_RUN_GRIPPER_OPEN");
     trace.events.push_back("DRY_RUN_GRIPPER_CLOSE");
     trace.events.push_back("DRY_RUN_ATTACH");
     trace.events.push_back("DRY_RUN_RESTORE_TABLE");
+    trace.gripper_open_before_pregrasp = true;
     trace.gripper_before_attach = true;
+    trace.gripper_close_before_lift = true;
     trace.attach_before_lift = true;
     push(ExecutorPhase::COMPLETE);
     trace.ok = true;
@@ -1172,6 +1313,82 @@ ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajec
     }
   }
 
+  auto requireGripperMotionDone = [&](SendResult grip, const GripperBridgeRequestFields& req,
+                                      const char* prefix, const char* missing_hook) -> bool {
+    if (grip.sent)
+    {
+      ++trace.gripper_commands_sent;
+    }
+    GripperCallOutcome call;
+    call.ok = grip.success;
+    call.error = grip.error;
+    call.error_code = grip.error_code;
+    call.message = grip.message;
+    call.elapsed_sec = grip.elapsed_sec;
+    call.response_received = grip.response_received;
+    if (!grip.success && grip.error.find(kErrorGripperServiceUnavailable) != std::string::npos)
+    {
+      call.kind = GripperCallKind::ServiceUnavailable;
+    }
+    else if (!grip.success && grip.error.find(kErrorGripperServiceTimeout) != std::string::npos)
+    {
+      call.kind = GripperCallKind::Timeout;
+    }
+    else if (!grip.success && grip.error.find(kErrorGripperNullResponse) != std::string::npos)
+    {
+      call.kind = GripperCallKind::NullResponse;
+    }
+    else if (!grip.success)
+    {
+      call.kind = GripperCallKind::BridgeError;
+    }
+    GripperCompletionKind completion = grip.gripper_completion;
+    if (completion == GripperCompletionKind::Unknown)
+    {
+      completion = classifyGripperCompletion(call, req);
+    }
+    trace.last_gripper_completion = completion;
+    logLine(hooks, std::string("GRIPPER COMPLETION ") + gripperCompletionName(completion) +
+                       " error_code=" + std::to_string(grip.error_code) + " message=\"" +
+                       grip.message + "\" elapsed_sec=" + std::to_string(grip.elapsed_sec));
+    if (!grip.success || !gripperBridgeMotionDone(completion))
+    {
+      std::string reason = grip.error;
+      if (reason.empty())
+      {
+        reason = missing_hook;
+      }
+      if (!gripperBridgeMotionDone(completion))
+      {
+        reason = formatGripperCompletionFailure(call, completion, prefix);
+      }
+      abortTo(trace, reason);
+      return false;
+    }
+    return true;
+  };
+
+  push(ExecutorPhase::OPEN_REAL_GRIPPER);
+  trace.events.push_back("OPEN_REAL_GRIPPER");
+  if (cfg.gripper_enabled)
+  {
+    if (!hooks.openGripper)
+    {
+      abortTo(trace, kErrorGripperOpenFailed);
+      return trace;
+    }
+    logLine(hooks, "Home settled; opening real gripper to position=0. Confirm fingers are clear.");
+    auto opened = hooks.openGripper();
+    if (!requireGripperMotionDone(opened, makeGripperOpenRequest(cfg), kErrorGripperOpenFailed,
+                                  kErrorGripperOpenFailed))
+    {
+      return trace;
+    }
+  }
+  push(ExecutorPhase::WAIT_GRIPPER_OPEN_DONE);
+  trace.events.push_back("WAIT_GRIPPER_OPEN_DONE");
+  trace.gripper_open_before_pregrasp = true;
+
   push(ExecutorPhase::VERIFY_FROZEN_START);
   if (!refreshOk())
   {
@@ -1212,17 +1429,18 @@ ExecutorTrace runFrozenExecutor(const ExecutorConfig& cfg, const PersistedTrajec
       return trace;
     }
     auto grip = hooks.closeGripper();
-    if (grip.sent)
+    if (!requireGripperMotionDone(grip, makeGripperCloseRequest(cfg), kErrorGripperCloseFailed,
+                                  kErrorGripperCloseFailed))
     {
-      ++trace.gripper_commands_sent;
-    }
-    if (!grip.success)
-    {
-      abortTo(trace, grip.error.empty() ? kErrorGripperCloseFailed : grip.error);
       return trace;
     }
   }
-  push(ExecutorPhase::VERIFY_GRIPPER);
+  push(ExecutorPhase::WAIT_GRIPPER_CLOSE_DONE);
+  trace.events.push_back("WAIT_GRIPPER_CLOSE_DONE");
+  push(ExecutorPhase::VERIFY_GRIPPER_CLOSED);
+  trace.events.push_back("VERIFY_GRIPPER_CLOSED");
+  trace.gripper_before_attach = true;
+  trace.gripper_close_before_lift = true;
 
   push(ExecutorPhase::ATTACH_PLANNING_SCENE_OBJECT);
   trace.events.push_back("ATTACH_PLANNING_SCENE_OBJECT");

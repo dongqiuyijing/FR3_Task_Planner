@@ -192,6 +192,7 @@ public:
                 getString(node_, "gripper_config_source", "parameter/default").c_str());
     RCLCPP_INFO(node_->get_logger(), "gripper service: %s", cfg_.gripper_service_name.c_str());
     RCLCPP_INFO(node_->get_logger(), "gripper id: %d", cfg_.gripper_id);
+    RCLCPP_INFO(node_->get_logger(), "gripper open_position: %d", cfg_.gripper_open_position);
     RCLCPP_INFO(node_->get_logger(), "gripper close_position: %d", cfg_.gripper_close_position);
     RCLCPP_INFO(node_->get_logger(), "gripper velocity: %d", cfg_.gripper_velocity);
     RCLCPP_INFO(node_->get_logger(), "gripper force: %d", cfg_.gripper_force);
@@ -217,7 +218,7 @@ public:
                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
       RCLCPP_ERROR(node_->get_logger(), "REAL ROBOT MOTION IS ENABLED");
       RCLCPP_ERROR(node_->get_logger(),
-                   "This will move the FAIRINO FR3 arm and close the real gripper.");
+                   "This will move the FAIRINO FR3 arm and open/close the real gripper.");
       RCLCPP_ERROR(node_->get_logger(),
                    "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
     }
@@ -257,6 +258,11 @@ public:
     RCLCPP_INFO(node_->get_logger(), "fixed duration original: %.9f s", original);
     RCLCPP_INFO(node_->get_logger(), "fixed duration scaled: %.9f s", scaled_duration);
     RCLCPP_INFO(node_->get_logger(), "fixed points: %zu", points);
+    RCLCPP_INFO(node_->get_logger(),
+                "DRY-RUN GRIPPER EVENT: REAL_GRIPPER_OPEN service=%s command=move pos=%d "
+                "after Home settled. SENT=%s",
+                cfg_.gripper_service_name.c_str(), cfg_.gripper_open_position,
+                motion ? "pending-gate" : "NO");
     RCLCPP_INFO(node_->get_logger(),
                 "DRY-RUN GRIPPER EVENT: REAL_GRIPPER_CLOSE service=%s command=move pos=%d "
                 "after PreGrasp_to_Grasp. SENT=%s",
@@ -319,6 +325,7 @@ public:
     hooks.sendSegment = [this](const std::string& logical, const TrajectorySegmentRecord& seg) {
       return sendSegment(logical, seg);
     };
+    hooks.openGripper = [this]() { return openGripper(); };
     hooks.closeGripper = [this]() { return closeGripper(); };
     hooks.pingGripper = [this]() { return pingGripper(true); };
     hooks.attachObject = [this]() { return attachObject(); };
@@ -373,6 +380,7 @@ private:
                        std::vector<std::string>(kArmJoints.begin(), kArmJoints.end()));
     cfg_.touch_links = getStringArray(node_, "touch_links", defaultTouchLinks());
     cfg_.gripper_id = getInt(node_, "gripper_id", 1);
+    cfg_.gripper_open_position = getInt(node_, "gripper_open_position", 0);
     cfg_.gripper_close_position = getInt(node_, "gripper_close_position", 85);
     cfg_.gripper_velocity = getInt(node_, "gripper_velocity", 20);
     cfg_.gripper_force = getInt(node_, "gripper_force", 20);
@@ -748,11 +756,16 @@ private:
   }
 
   SendResult callGripperService(const fr_task_planner::GripperBridgeRequestFields& fields,
-                                bool require_motion_gate, const char* nonzero_prefix)
+                                bool require_motion_gate, const char* nonzero_prefix,
+                                bool require_motion_done)
   {
     using fr_task_planner::classifyGripperCall;
+    using fr_task_planner::classifyGripperCompletion;
+    using fr_task_planner::formatGripperCompletionFailure;
     using fr_task_planner::formatGripperRequestLog;
     using fr_task_planner::formatGripperResponseLog;
+    using fr_task_planner::gripperBridgeMotionDone;
+    using fr_task_planner::gripperCompletionName;
     SendResult result;
     result.attempted = true;
     if (require_motion_gate && !motionGateOpen())
@@ -775,6 +788,8 @@ private:
       auto classified =
           classifyGripperCall(false, false, false, 0, "", wait_elapsed, nonzero_prefix);
       result.error = classified.error;
+      result.elapsed_sec = classified.elapsed_sec;
+      result.gripper_completion = classifyGripperCompletion(classified, fields);
       RCLCPP_ERROR(node_->get_logger(), "%s",
                    formatGripperResponseLog(0, classified.error, wait_elapsed, false).c_str());
       return result;
@@ -791,12 +806,14 @@ private:
         node_, future, std::chrono::duration<double>(cfg_.gripper_timeout_sec));
     const double elapsed =
         std::chrono::duration<double>(std::chrono::steady_clock::now() - t_send).count();
+    result.elapsed_sec = elapsed;
     RCLCPP_INFO(node_->get_logger(), "GRIPPER response timestamp elapsed_sec=%.3f", elapsed);
     if (wait_status != rclcpp::FutureReturnCode::SUCCESS)
     {
       auto classified =
           classifyGripperCall(true, true, false, 0, "", elapsed, nonzero_prefix);
       result.error = classified.error;
+      result.gripper_completion = classifyGripperCompletion(classified, fields);
       RCLCPP_ERROR(node_->get_logger(), "%s",
                    formatGripperResponseLog(0, classified.error, elapsed, false).c_str());
       return result;
@@ -805,14 +822,27 @@ private:
     const bool null_resp = !resp;
     const int error_code = resp ? resp->error_code : 0;
     const std::string message = resp ? resp->message : "";
+    result.error_code = error_code;
+    result.message = message;
+    result.response_received = !null_resp;
     RCLCPP_INFO(node_->get_logger(), "%s",
                 formatGripperResponseLog(error_code, message, elapsed, !null_resp).c_str());
     auto classified = classifyGripperCall(true, false, null_resp, error_code, message, elapsed,
                                           nonzero_prefix);
+    result.gripper_completion = classifyGripperCompletion(classified, fields);
+    RCLCPP_INFO(node_->get_logger(), "GRIPPER COMPLETION %s (not PHYSICAL_GRASP_CONFIRMED)",
+                gripperCompletionName(result.gripper_completion).c_str());
     if (!classified.ok)
     {
       result.error = classified.error;
       RCLCPP_ERROR(node_->get_logger(), "%s", classified.error.c_str());
+      return result;
+    }
+    if (require_motion_done && !gripperBridgeMotionDone(result.gripper_completion))
+    {
+      result.error = formatGripperCompletionFailure(classified, result.gripper_completion,
+                                                    nonzero_prefix);
+      RCLCPP_ERROR(node_->get_logger(), "%s", result.error.c_str());
       return result;
     }
     result.success = true;
@@ -822,13 +852,19 @@ private:
   SendResult pingGripper(bool require_motion_gate)
   {
     return callGripperService(fr_task_planner::makeGripperPingRequest(cfg_), require_motion_gate,
-                              fr_task_planner::kErrorGripperPingFailed);
+                              fr_task_planner::kErrorGripperPingFailed, false);
+  }
+
+  SendResult openGripper()
+  {
+    return callGripperService(fr_task_planner::makeGripperOpenRequest(cfg_), true,
+                              fr_task_planner::kErrorGripperOpenFailed, true);
   }
 
   SendResult closeGripper()
   {
     auto result = callGripperService(fr_task_planner::makeGripperCloseRequest(cfg_), true,
-                                     fr_task_planner::kErrorGripperCloseFailed);
+                                     fr_task_planner::kErrorGripperCloseFailed, true);
     if (!result.success)
     {
       return result;
@@ -981,6 +1017,7 @@ int main(int argc, char** argv)
                  std::vector<std::string>(kArmJoints.begin(), kArmJoints.end()));
   declareDefault(node, "touch_links", defaultTouchLinks());
   declareDefault(node, "gripper_id", 1);
+  declareDefault(node, "gripper_open_position", 0);
   declareDefault(node, "gripper_close_position", 85);
   declareDefault(node, "gripper_velocity", 20);
   declareDefault(node, "gripper_force", 20);
