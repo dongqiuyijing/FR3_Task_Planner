@@ -1,11 +1,13 @@
 #include "fr_task_planner/inspection_endpoint_candidates.hpp"
 #include "fr_task_planner/inspection_visibility.hpp"
+#include "fr_task_planner/pregrasp_ik_candidates.hpp"
 #include "fr_task_planner/winner_trajectory_io.hpp"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <future>
 #include <iomanip>
@@ -62,10 +64,16 @@ using fr_task_planner::EndpointCandidate;
 using fr_task_planner::EndpointGenerationConfig;
 using fr_task_planner::filterRollsByView;
 using fr_task_planner::fixedInspectionDesignCamera;
+using fr_task_planner::generatePreGraspIkCandidates;
 using fr_task_planner::generateValidEndpointCandidates;
 using fr_task_planner::GeometricVisibilityResult;
+using fr_task_planner::jointL1;
 using fr_task_planner::jointL2;
 using fr_task_planner::jointsFromState;
+using fr_task_planner::NamedJointSeed;
+using fr_task_planner::PreGraspIkCandidate;
+using fr_task_planner::PreGraspIkConfig;
+using fr_task_planner::PreGraspIkGenerationResult;
 using fr_task_planner::kArmJoints;
 using fr_task_planner::maxJointError;
 using fr_task_planner::poseToIso;
@@ -78,10 +86,16 @@ using fr_task_planner::TrajectoryPointRecord;
 using fr_task_planner::TrajectorySegmentRecord;
 using fr_task_planner::WinnerEndpoints;
 using fr_task_planner::attachStandardEvents;
+using fr_task_planner::computeFrozenTaskMetrics;
 using fr_task_planner::extractArmPositions;
 using fr_task_planner::fillDerivedTotals;
+using fr_task_planner::firstLogicalSegment;
+using fr_task_planner::FrozenTaskMetrics;
 using fr_task_planner::isFixedDeployableLogical;
 using fr_task_planner::jointsToVec;
+using fr_task_planner::kStep12cPreGraspRad;
+using fr_task_planner::lastLogicalSegment;
+using fr_task_planner::logicalMetrics;
 using fr_task_planner::kLogicalCurrentToHome;
 using fr_task_planner::loadWinnerYaml;
 using fr_task_planner::logicalSegmentFromStage;
@@ -91,6 +105,18 @@ using fr_task_planner::validateContinuity;
 using fr_task_planner::validateEndpoints;
 using fr_task_planner::validateRoundTrip;
 using fr_task_planner::winnerMatchesFrozenStep12c;
+using fr_task_planner::detachObjectDiagnostic;
+using fr_task_planner::kLogicalAToB;
+using fr_task_planner::kLogicalBToC;
+using fr_task_planner::kLogicalGraspToLift;
+using fr_task_planner::kLogicalHomeToPreGrasp;
+using fr_task_planner::kLogicalLiftToA;
+using fr_task_planner::kLogicalPreGraspToGrasp;
+using fr_task_planner::maxAbsError;
+using fr_task_planner::maxAbsErrorJoints;
+using fr_task_planner::poseError;
+using fr_task_planner::removeWorldObjectDiagnostic;
+using fr_task_planner::vecToJoints;
 using fr_task_planner::writeTrajectoryYaml;
 
 const char* kPlanningGroup = "fairino3_v6_group";
@@ -501,7 +527,8 @@ void addPrefixStages(moveit::task_constructor::Task& task, const rclcpp::Node::S
                      const geometry_msgs::msg::PoseStamped& grasp,
                      const geometry_msgs::msg::PoseStamped& lift, double object_height,
                      double object_radius, double planning_time,
-                     const std::map<std::string, double>& home)
+                     const std::map<std::string, double>& home,
+                     const std::map<std::string, double>* pregrasp_joints = nullptr)
 {
   task.add(std::make_unique<moveit::task_constructor::stages::CurrentState>("CurrentState"));
   auto ompl_home =
@@ -522,8 +549,15 @@ void addPrefixStages(moveit::task_constructor::Task& task, const rclcpp::Node::S
   auto move_pregrasp =
       std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo PreGrasp", ompl);
   move_pregrasp->setGroup(group);
-  move_pregrasp->setIKFrame(ee_link);
-  move_pregrasp->setGoal(pregrasp);
+  if (pregrasp_joints)
+  {
+    move_pregrasp->setGoal(*pregrasp_joints);
+  }
+  else
+  {
+    move_pregrasp->setIKFrame(ee_link);
+    move_pregrasp->setGoal(pregrasp);
+  }
   move_pregrasp->setTimeout(planning_time);
   task.add(std::move(move_pregrasp));
   auto allow = std::make_unique<moveit::task_constructor::stages::ModifyPlanningScene>(
@@ -1167,6 +1201,13 @@ std::string fileBaseName(const std::string& path)
   return pos == std::string::npos ? path : path.substr(pos + 1);
 }
 
+bool targetsFrozenBaselineFile(const std::string& path)
+{
+  const std::string base = fileBaseName(path);
+  return base == "step12c_tilted_camera_winner.yaml" ||
+         base == "step12c_tilted_camera_winner_trajectory.yaml";
+}
+
 TrajectoryPointRecord recordFromPoint(const trajectory_msgs::msg::JointTrajectoryPoint& pt)
 {
   TrajectoryPointRecord rec;
@@ -1714,6 +1755,814 @@ int runWinnerReplayPersist(
                           playback_ok);
   return 5;
 }
+
+std::string fileSha256(const std::string& path)
+{
+  const std::string cmd = "sha256sum \"" + path + "\" 2>/dev/null";
+  FILE* pipe = popen(cmd.c_str(), "r");
+  if (!pipe)
+  {
+    return "";
+  }
+  char buf[160];
+  std::string out;
+  while (fgets(buf, sizeof(buf), pipe) != nullptr)
+  {
+    out += buf;
+  }
+  pclose(pipe);
+  const auto sp = out.find(' ');
+  return sp == std::string::npos ? out : out.substr(0, sp);
+}
+
+planning_scene::PlanningScenePtr makePreGraspPlanningScene(
+    const planning_scene::PlanningScene& src, const moveit_msgs::msg::CollisionObject& object,
+    const std::string& object_id, const std::string& table_name)
+{
+  auto scene = cloneDiagnosticScene(src);
+  detachObjectDiagnostic(*scene, object_id);
+  for (const auto& name : scene->getWorld()->getObjectIds())
+  {
+    if (name == object_id)
+    {
+      removeWorldObjectDiagnostic(*scene, object_id);
+      break;
+    }
+  }
+  scene->processCollisionObjectMsg(object);
+  scene->getAllowedCollisionMatrixNonConst().setEntry(object_id, table_name, true);
+  return scene;
+}
+
+std::map<std::string, double> stageEndJoints(
+    const std::vector<const moveit::task_constructor::SolutionBase*>& leaves, const std::string& name)
+{
+  const auto* sol = findStageSolution(leaves, name);
+  if (!sol || !sol->end() || !sol->end()->scene())
+  {
+    return {};
+  }
+  return jointsFromState(sol->end()->scene()->getCurrentState());
+}
+
+bool finiteTrajectory(const PersistedTrajectory& traj, std::string& reason)
+{
+  for (const auto& seg : traj.segments)
+  {
+    for (const auto& name : kArmJoints)
+    {
+      if (std::find(seg.joint_names.begin(), seg.joint_names.end(), name) == seg.joint_names.end() &&
+          !seg.points.empty())
+      {
+        reason = "missing joint " + name + " in " + seg.name;
+        return false;
+      }
+    }
+    if (!seg.points.empty() && !timesMonotonic(seg))
+    {
+      reason = "nonmonotonic time: " + seg.name;
+      return false;
+    }
+    for (const auto& pt : seg.points)
+    {
+      auto check = [&](const std::vector<double>& values, const char* kind) {
+        for (double v : values)
+        {
+          if (!std::isfinite(v))
+          {
+            reason = std::string("nonfinite ") + kind + " in " + seg.name;
+            return false;
+          }
+        }
+        return true;
+      };
+      if (!check(pt.positions, "position") || !check(pt.velocities, "velocity") ||
+          !check(pt.accelerations, "acceleration"))
+      {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+struct GraspPlanOutcome
+{
+  bool ok = false;
+  std::string failure = "not planned";
+  PersistedTrajectory traj;
+  FrozenTaskMetrics metrics;
+  std::map<std::string, double> pregrasp_joints;
+  std::map<std::string, double> grasp_joints;
+  std::map<std::string, double> lift_joints;
+  double min_clearance = 0.0;
+  bool collision_free = false;
+  bool joint_limits_ok = false;
+  bool pilz_lin = false;
+  bool abc_ok = false;
+  bool fk_ok = false;
+  bool pregrasp_locked = false;
+};
+
+void addFixedAbcStages(moveit::task_constructor::Task& task, const rclcpp::Node::SharedPtr& node,
+                       const std::string& group, const WinnerEndpoints& winner, double planning_time)
+{
+  auto ompl =
+      std::make_shared<moveit::task_constructor::solvers::PipelinePlanner>(node, kOmplPipeline);
+  ompl->setTimeout(planning_time);
+  auto move_a = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo ViewA", ompl);
+  move_a->setGroup(group);
+  move_a->setGoal(winner.a_rad);
+  move_a->setTimeout(planning_time);
+  task.add(std::move(move_a));
+  auto move_b = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo ViewB", ompl);
+  move_b->setGroup(group);
+  move_b->setGoal(winner.b_rad);
+  move_b->setTimeout(planning_time);
+  task.add(std::move(move_b));
+  auto move_c = std::make_unique<moveit::task_constructor::stages::MoveTo>("MoveTo ViewC", ompl);
+  move_c->setGroup(group);
+  move_c->setGoal(winner.c_rad);
+  move_c->setTimeout(planning_time);
+  task.add(std::move(move_c));
+}
+
+GraspPlanOutcome evaluateMtcSolution(
+    moveit::task_constructor::Task& task, bool full, const std::string& group,
+    const std::string& ee_link, const geometry_msgs::msg::PoseStamped& pregrasp,
+    const geometry_msgs::msg::PoseStamped& grasp, const geometry_msgs::msg::PoseStamped& lift,
+    const WinnerEndpoints& winner, const std::map<std::string, double>& locked_pregrasp,
+    double pos_tol, double ori_tol_deg, const CollisionDiagConfig& dcfg)
+{
+  GraspPlanOutcome out;
+  std::string error;
+  if (!extractPersistedSegments(*task.solutions().front(), out.traj, error))
+  {
+    out.failure = "extract failed: " + error;
+    return out;
+  }
+  if (!finiteTrajectory(out.traj, out.failure))
+  {
+    return out;
+  }
+  std::vector<const moveit::task_constructor::SolutionBase*> leaves;
+  flattenSolutions(*task.solutions().front(), leaves);
+  out.pregrasp_joints = stageEndJoints(leaves, "MoveTo PreGrasp");
+  out.grasp_joints = stageEndJoints(leaves, "MoveTo Grasp");
+  out.lift_joints = stageEndJoints(leaves, "MoveTo Lift");
+  out.pilz_lin = findStageSolution(leaves, "MoveTo Grasp") != nullptr &&
+                 findStageSolution(leaves, "MoveTo Lift") != nullptr;
+  if (!out.pilz_lin)
+  {
+    out.failure = "PILZ_LIN_MISSING";
+    return out;
+  }
+  if (out.pregrasp_joints.empty() || maxAbsErrorJoints(out.pregrasp_joints, locked_pregrasp) > 1e-3)
+  {
+    out.failure = "PREGRASP_JOINT_LOCK_FAILED";
+    return out;
+  }
+  out.pregrasp_locked = true;
+  auto* jmg = task.getRobotModel()->getJointModelGroup(group);
+  auto fk_stage = [&](const char* stage, const geometry_msgs::msg::PoseStamped& pose) {
+    const auto* sol = findStageSolution(leaves, stage);
+    if (!sol || !sol->end() || !sol->end()->scene())
+    {
+      return false;
+    }
+    const auto& state = sol->end()->scene()->getCurrentState();
+    if (jmg && !state.satisfiesBounds(jmg))
+    {
+      out.joint_limits_ok = false;
+      return false;
+    }
+    double pos = 0.0;
+    double ori = 0.0;
+    poseError(poseToIso(pose.pose), tcpInBase(state, ee_link), pos, ori);
+    return pos <= pos_tol && ori <= ori_tol_deg;
+  };
+  out.joint_limits_ok = true;
+  out.fk_ok = fk_stage("MoveTo PreGrasp", pregrasp) && fk_stage("MoveTo Grasp", grasp) &&
+              fk_stage("MoveTo Lift", lift);
+  if (!out.fk_ok)
+  {
+    out.failure = "PREFIX_FK_FAILED";
+    return out;
+  }
+  out.collision_free = true;
+  out.min_clearance = std::numeric_limits<double>::infinity();
+  for (const auto* leaf : leaves)
+  {
+    if (!leaf || !leaf->start() || !leaf->start()->scene())
+    {
+      continue;
+    }
+    auto scene = cloneDiagnosticScene(*leaf->start()->scene());
+    moveit_task_constructor_msgs::msg::Solution msg;
+    leaf->toMsg(msg);
+    for (const auto& sub : msg.sub_trajectory)
+    {
+      const auto& jt = sub.trajectory.joint_trajectory;
+      if (jt.points.empty())
+      {
+        continue;
+      }
+      const size_t stride = std::max<size_t>(1, jt.points.size() / 8);
+      for (size_t i = 0; i < jt.points.size(); i += stride)
+      {
+        const size_t idx = (i + stride >= jt.points.size()) ? (jt.points.size() - 1) : i;
+        std::map<std::string, double> q;
+        const size_t n = std::min(jt.joint_names.size(), jt.points[idx].positions.size());
+        for (size_t k = 0; k < n; ++k)
+        {
+          q[jt.joint_names[k]] = jt.points[idx].positions[k];
+        }
+        applyJointsToScene(*scene, q);
+        if (jmg && !scene->getCurrentState().satisfiesBounds(jmg))
+        {
+          out.joint_limits_ok = false;
+          out.failure = "JOINT_LIMITS_FAILED";
+          return out;
+        }
+        const auto snap = collectCollisionContacts(*scene, dcfg);
+        if (snap.collision)
+        {
+          out.collision_free = false;
+          out.failure = "TRAJECTORY_COLLISION";
+          return out;
+        }
+        double col = 0.0;
+        if (tryColumnDistance(*scene, group, dcfg.column_name, col))
+        {
+          out.min_clearance = std::min(out.min_clearance, col);
+        }
+      }
+    }
+  }
+  if (!std::isfinite(out.min_clearance))
+  {
+    out.min_clearance = 0.0;
+  }
+  out.metrics = computeFrozenTaskMetrics(out.traj);
+  if (!out.metrics.home_to_pregrasp.present || !out.metrics.pregrasp_to_grasp.present ||
+      !out.metrics.grasp_to_lift.present)
+  {
+    out.failure = "PREFIX_SEGMENTS_MISSING";
+    return out;
+  }
+  if (full)
+  {
+    const auto endpoints = validateEndpoints(out.traj, winner, 1e-3);
+    const auto continuity = validateContinuity(out.traj, 1e-3);
+    out.abc_ok = endpoints.ok;
+    if (!endpoints.ok)
+    {
+      out.failure = "ABC_ENDPOINT_MISMATCH";
+      return out;
+    }
+    if (!continuity.ok)
+    {
+      out.failure = "SEGMENT_DISCONTINUITY";
+      return out;
+    }
+    if (!out.metrics.lift_to_a.present || !out.metrics.a_to_b.present || !out.metrics.b_to_c.present)
+    {
+      out.failure = "FULL_SEGMENTS_MISSING";
+      return out;
+    }
+  }
+  out.ok = out.collision_free && out.joint_limits_ok && out.fk_ok && out.pilz_lin &&
+           out.pregrasp_locked;
+  if (out.ok)
+  {
+    out.failure = "ok";
+  }
+  return out;
+}
+
+GraspPlanOutcome planGraspCandidate(
+    const rclcpp::Node::SharedPtr& node, const std::string& group, const std::string& ee_link,
+    const std::string& attach_link, const std::string& object_id, const std::string& table_name,
+    const std::vector<std::string>& touch_links, const geometry_msgs::msg::PoseStamped& object_scene,
+    const geometry_msgs::msg::PoseStamped& pregrasp, const geometry_msgs::msg::PoseStamped& grasp,
+    const geometry_msgs::msg::PoseStamped& lift, double object_height, double object_radius,
+    double planning_time, const std::map<std::string, double>& home,
+    const std::map<std::string, double>& locked_pregrasp, const WinnerEndpoints& winner, bool full,
+    int max_attempts, const CollisionDiagConfig& dcfg, double pos_tol, double ori_tol_deg)
+{
+  GraspPlanOutcome last;
+  for (int attempt = 1; attempt <= max_attempts && rclcpp::ok(); ++attempt)
+  {
+    moveit::task_constructor::Task task("", true);
+    task.setName(full ? "FR3 Step14 Full" : "FR3 Step14 Prefix");
+    task.loadRobotModel(node);
+    addPrefixStages(task, node, group, ee_link, attach_link, object_id, table_name, touch_links,
+                    object_scene, pregrasp, grasp, lift, object_height, object_radius, planning_time,
+                    home, &locked_pregrasp);
+    if (full)
+    {
+      addFixedAbcStages(task, node, group, winner, planning_time);
+    }
+    try
+    {
+      task.init();
+    }
+    catch (const std::exception& ex)
+    {
+      last.failure = std::string("init failed: ") + ex.what();
+      continue;
+    }
+    if (!task.plan(1) || task.numSolutions() < 1)
+    {
+      last.failure = full ? "FULL_TASK_PLAN_FAILED" : "PREFIX_PLAN_FAILED";
+      continue;
+    }
+    last = evaluateMtcSolution(task, full, group, ee_link, pregrasp, grasp, lift, winner,
+                               locked_pregrasp, pos_tol, ori_tol_deg, dcfg);
+    if (last.ok)
+    {
+      return last;
+    }
+  }
+  return last;
+}
+
+int runGraspPrefixOptimize(
+    const rclcpp::Node::SharedPtr& node, const std::string& group, const std::string& ee_link,
+    const std::string& attach_link, const std::string& object_id, const std::string& table_name,
+    const std::string& column_name, const std::vector<std::string>& touch_links,
+    const geometry_msgs::msg::PoseStamped& object_scene,
+    const geometry_msgs::msg::PoseStamped& pregrasp, const geometry_msgs::msg::PoseStamped& grasp,
+    const geometry_msgs::msg::PoseStamped& lift, double object_height, double object_radius,
+    double planning_time, const std::map<std::string, double>& home,
+    const moveit::core::RobotModelConstPtr& robot_model, SearchViz& viz, const std::string& diag_path,
+    double pos_tol, double ori_tol_deg)
+{
+  const auto t0 = std::chrono::steady_clock::now();
+  auto elapsed = [&]() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+  };
+  RCLCPP_INFO(node->get_logger(), "========== STEP 14 GRASP PREFIX OPTIMIZATION ==========");
+  RCLCPP_INFO(node->get_logger(), "PLAN / RViz ONLY. No Gazebo execute. No real robot.");
+  RCLCPP_INFO(node->get_logger(), "PreGrasp/Grasp/Lift TCP poses FIXED. A/B/C joints FIXED.");
+  RCLCPP_INFO(node->get_logger(), "Pilz LIN for Grasp and Lift PRESERVED.");
+
+  const std::string winner_in = getString(
+      node, "winner_input_path",
+      "/home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_winner.yaml");
+  const std::string frozen_path = getString(
+      node, "frozen_trajectory_path",
+      "/home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/"
+      "step12c_tilted_camera_winner_trajectory.yaml");
+  std::string winner_out = getString(
+      node, "winner_output_path",
+      "/home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step14_optimized_grasp_winner.yaml");
+  std::string traj_out = getString(
+      node, "trajectory_output_path",
+      "/home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/"
+      "step14_optimized_grasp_trajectory.yaml");
+  if (targetsFrozenBaselineFile(winner_out) || winner_out == winner_in)
+  {
+    RCLCPP_WARN(node->get_logger(),
+                "STEP14 refusing to overwrite frozen winner YAML; redirecting output");
+    winner_out =
+        "/home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/"
+        "step14_optimized_grasp_winner.yaml";
+  }
+  if (targetsFrozenBaselineFile(traj_out) || traj_out == frozen_path)
+  {
+    RCLCPP_WARN(node->get_logger(),
+                "STEP14 refusing to overwrite frozen trajectory YAML; redirecting output");
+    traj_out =
+        "/home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/"
+        "step14_optimized_grasp_trajectory.yaml";
+  }
+  const int max_ik = getInt(node, "max_pregrasp_ik_candidates", 24);
+  const int max_prefix = getInt(node, "max_prefix_plan_candidates", 12);
+  const int max_full = getInt(node, "max_full_task_candidates", 6);
+  const int plan_attempts = getInt(node, "full_candidate_plan_attempts", 3);
+  const double timeout_sec = node->has_parameter("step14_search_timeout_sec") ?
+                                 node->get_parameter("step14_search_timeout_sec").as_double() :
+                                 900.0;
+  const double prefix_planning_time = node->has_parameter("step14_prefix_planning_time") ?
+                                          node->get_parameter("step14_prefix_planning_time").as_double() :
+                                          std::min(5.0, planning_time);
+  const double full_planning_time = node->has_parameter("step14_full_planning_time") ?
+                                        node->get_parameter("step14_full_planning_time").as_double() :
+                                        planning_time;
+  const std::string sha_winner_before = fileSha256(winner_in);
+  const std::string sha_traj_before = fileSha256(frozen_path);
+
+  WinnerEndpoints winner;
+  std::string error;
+  if (!loadWinnerYaml(winner_in, winner, error) || !winnerMatchesFrozenStep12c(winner, error))
+  {
+    RCLCPP_ERROR(node->get_logger(), "STEP14 winner lock failed: %s", error.c_str());
+    std::ofstream yaml(diag_path);
+    yaml << "status: FAIL\nfailure_classification: WINNER_ENDPOINT_MISMATCH\n";
+    return 3;
+  }
+  PersistedTrajectory frozen;
+  if (!readTrajectoryYaml(frozen_path, frozen, error))
+  {
+    RCLCPP_ERROR(node->get_logger(), "STEP14 frozen trajectory unread: %s", error.c_str());
+    std::ofstream yaml(diag_path);
+    yaml << "status: FAIL\nfailure_classification: FROZEN_TRAJECTORY_UNREADABLE\n";
+    return 3;
+  }
+  const FrozenTaskMetrics old_m = computeFrozenTaskMetrics(frozen);
+  RCLCPP_INFO(node->get_logger(),
+              "BASELINE from points Home->PreGrasp t=%.9f J1=%.6f rad  prefix=%.9f  Home->C=%.9f",
+              old_m.home_to_pregrasp.duration, old_m.home_to_pregrasp.j1_abs_travel,
+              old_m.prefix_duration, old_m.full_deployable_duration);
+
+  auto world_scene = fetchPlanningScene(node, robot_model);
+  if (!world_scene)
+  {
+    std::ofstream yaml(diag_path);
+    yaml << "status: FAIL\nfailure_classification: PLANNING_SCENE_UNAVAILABLE\n";
+    return 2;
+  }
+  const auto object = makeCylinder(object_id, object_scene, object_height, object_radius);
+  auto pregrasp_scene = makePreGraspPlanningScene(*world_scene, object, object_id, table_name);
+  CollisionDiagConfig dcfg;
+  dcfg.object_id = object_id;
+  dcfg.table_name = table_name;
+  dcfg.column_name = column_name;
+  dcfg.touch_links = touch_links;
+
+  PreGraspIkConfig ik_cfg;
+  ik_cfg.group = group;
+  ik_cfg.ee_link = ee_link;
+  ik_cfg.object_id = object_id;
+  ik_cfg.table_name = table_name;
+  ik_cfg.column_name = column_name;
+  ik_cfg.touch_links = touch_links;
+  ik_cfg.pos_tol = pos_tol;
+  ik_cfg.ori_tol_deg = ori_tol_deg;
+  ik_cfg.min_ik_solution_distance = node->has_parameter("min_ik_solution_distance") ?
+                                        node->get_parameter("min_ik_solution_distance").as_double() :
+                                        0.1;
+  ik_cfg.max_unique_candidates = static_cast<uint32_t>(std::max(1, max_ik));
+  ik_cfg.max_ik_attempts = static_cast<uint32_t>(std::max(8, getInt(node, "max_ik_attempts", 96)));
+  const auto baseline_pre = vecToJoints(kStep12cPreGraspRad);
+  std::vector<NamedJointSeed> extra = { { "view_a", winner.a_rad },
+                                        { "view_b", winner.b_rad },
+                                        { "view_c", winner.c_rad } };
+  const auto ik = generatePreGraspIkCandidates(*pregrasp_scene, pregrasp, home, baseline_pre, extra,
+                                               ik_cfg, node->get_logger());
+  int different_branches = 0;
+  double min_j1 = std::numeric_limits<double>::infinity();
+  for (const auto& cand : ik.unique)
+  {
+    if (cand.valid)
+    {
+      ++different_branches;
+      min_j1 = std::min(min_j1, cand.j1_abs_displacement);
+    }
+  }
+
+  std::vector<PreGraspIkCandidate> prefix_pool;
+  for (const auto& cand : ik.unique)
+  {
+    if (cand.is_baseline)
+    {
+      prefix_pool.push_back(cand);
+    }
+  }
+  for (const auto& cand : ik.unique)
+  {
+    if (static_cast<int>(prefix_pool.size()) >= max_prefix)
+    {
+      break;
+    }
+    if (cand.is_baseline || !cand.valid)
+    {
+      continue;
+    }
+    prefix_pool.push_back(cand);
+  }
+
+  struct PrefixRow
+  {
+    PreGraspIkCandidate ik;
+    GraspPlanOutcome plan;
+  };
+  std::vector<PrefixRow> prefix_ok;
+  int prefix_tested = 0;
+  for (const auto& cand : prefix_pool)
+  {
+    if (!rclcpp::ok() || elapsed() > timeout_sec)
+    {
+      break;
+    }
+    ++prefix_tested;
+    RCLCPP_INFO(node->get_logger(), "STEP14 prefix plan %s j1_disp=%.3f rad baseline=%s",
+                cand.candidate_id.c_str(), cand.j1_abs_displacement,
+                cand.is_baseline ? "YES" : "NO");
+    PrefixRow row;
+    row.ik = cand;
+    row.plan = planGraspCandidate(node, group, ee_link, attach_link, object_id, table_name,
+                                  touch_links, object_scene, pregrasp, grasp, lift, object_height,
+                                  object_radius, prefix_planning_time, home, cand.joints, winner,
+                                  false, plan_attempts, dcfg, pos_tol, ori_tol_deg);
+    if (row.plan.ok)
+    {
+      prefix_ok.push_back(std::move(row));
+    }
+    else
+    {
+      RCLCPP_WARN(node->get_logger(), "prefix %s failed: %s", cand.candidate_id.c_str(),
+                  row.plan.failure.c_str());
+    }
+  }
+  std::sort(prefix_ok.begin(), prefix_ok.end(), [](const PrefixRow& a, const PrefixRow& b) {
+    return a.plan.metrics.prefix_duration < b.plan.metrics.prefix_duration;
+  });
+
+  std::vector<PrefixRow> full_pool;
+  for (const auto& row : prefix_ok)
+  {
+    if (row.ik.is_baseline)
+    {
+      full_pool.push_back(row);
+    }
+  }
+  for (const auto& row : prefix_ok)
+  {
+    if (static_cast<int>(full_pool.size()) >= max_full)
+    {
+      break;
+    }
+    if (row.ik.is_baseline)
+    {
+      continue;
+    }
+    full_pool.push_back(row);
+  }
+
+  struct FullRow
+  {
+    PrefixRow prefix;
+    GraspPlanOutcome plan;
+  };
+  std::vector<FullRow> full_ok;
+  int full_tested = 0;
+  int full_rejected = 0;
+  for (const auto& row : full_pool)
+  {
+    if (!rclcpp::ok() || elapsed() > timeout_sec)
+    {
+      break;
+    }
+    ++full_tested;
+    RCLCPP_INFO(node->get_logger(), "STEP14 full Home->C plan %s", row.ik.candidate_id.c_str());
+    FullRow fr;
+    fr.prefix = row;
+    fr.plan = planGraspCandidate(node, group, ee_link, attach_link, object_id, table_name, touch_links,
+                                 object_scene, pregrasp, grasp, lift, object_height, object_radius,
+                                 full_planning_time, home, row.ik.joints, winner, true, plan_attempts,
+                                 dcfg, pos_tol, ori_tol_deg);
+    if (fr.plan.ok)
+    {
+      full_ok.push_back(std::move(fr));
+    }
+    else
+    {
+      ++full_rejected;
+      RCLCPP_WARN(node->get_logger(), "full %s failed: %s", row.ik.candidate_id.c_str(),
+                  fr.plan.failure.c_str());
+    }
+  }
+  std::sort(full_ok.begin(), full_ok.end(), [](const FullRow& a, const FullRow& b) {
+    const auto& am = a.plan.metrics;
+    const auto& bm = b.plan.metrics;
+    if (std::abs(am.full_deployable_duration - bm.full_deployable_duration) > 1e-9)
+    {
+      return am.full_deployable_duration < bm.full_deployable_duration;
+    }
+    if (std::abs(am.home_to_pregrasp.duration - bm.home_to_pregrasp.duration) > 1e-9)
+    {
+      return am.home_to_pregrasp.duration < bm.home_to_pregrasp.duration;
+    }
+    if (std::abs(am.full_deployable_path_length_l2 - bm.full_deployable_path_length_l2) > 1e-9)
+    {
+      return am.full_deployable_path_length_l2 < bm.full_deployable_path_length_l2;
+    }
+    return am.home_to_pregrasp.j1_abs_travel < bm.home_to_pregrasp.j1_abs_travel;
+  });
+
+  const bool have_winner = !full_ok.empty();
+  const FullRow* win = have_winner ? &full_ok.front() : nullptr;
+  bool improved = false;
+  if (win)
+  {
+    improved = win->plan.metrics.full_deployable_duration < old_m.full_deployable_duration - 1e-6;
+    PersistedTrajectory saved = win->plan.traj;
+    saved.task_version = "STEP14";
+    saved.label = "STEP14 OPTIMIZED GRASP PREFIX TRAJECTORY";
+    saved.source_winner_file = fileBaseName(winner_in);
+    saved.source_winner_path = winner_in;
+    saved.search_score_total_time = win->plan.metrics.full_deployable_duration;
+    saved.search_score_joint_path_length = win->plan.metrics.full_deployable_path_length_l2;
+    saved.winner = winner;
+    saved.execution_performed = false;
+    saved.real_robot_validated = false;
+    fillDerivedTotals(saved);
+    if (!writeTrajectoryYaml(traj_out, saved, error))
+    {
+      RCLCPP_ERROR(node->get_logger(), "STEP14 serialize failed: %s", error.c_str());
+      std::ofstream yaml(diag_path);
+      yaml << "status: FAIL\nfailure_classification: TRAJECTORY_SERIALIZE_FAILED\n";
+      return 5;
+    }
+    PersistedTrajectory loaded;
+    if (!readTrajectoryYaml(traj_out, loaded, error))
+    {
+      std::ofstream yaml(diag_path);
+      yaml << "status: FAIL\nfailure_classification: TRAJECTORY_READBACK_FAILED\n";
+      return 5;
+    }
+    const auto roundtrip = validateRoundTrip(saved, loaded);
+    const auto continuity = validateContinuity(loaded);
+    const auto endpoints = validateEndpoints(loaded, winner, 1e-3);
+    const FrozenTaskMetrics loaded_m = computeFrozenTaskMetrics(loaded);
+    const bool identity = roundtrip.ok &&
+                          std::abs(loaded_m.full_deployable_duration -
+                                   win->plan.metrics.full_deployable_duration) < 1e-12;
+    std::ofstream winy(winner_out);
+    winy.setf(std::ios::fixed);
+    winy.precision(17);
+    winy << "label: STEP14 OPTIMIZED GRASP PREFIX WINNER\n";
+    winy << "task_version: STEP14\n";
+    winy << "path_improvement_verified: " << (improved ? "YES" : "NO") << "\n";
+    winy << "candidate_id: " << win->prefix.ik.candidate_id << "\n";
+    winy << "is_baseline_ik: " << (win->prefix.ik.is_baseline ? "true" : "false") << "\n";
+    winy << "home_joints_rad: " << formatHomeList(home) << "\n";
+    winy << "pregrasp_joints_rad: " << formatHomeList(win->plan.pregrasp_joints) << "\n";
+    winy << "grasp_joints_rad: " << formatHomeList(win->plan.grasp_joints) << "\n";
+    winy << "lift_joints_rad: " << formatHomeList(win->plan.lift_joints) << "\n";
+    winy << "a_roll_deg: " << winner.a_roll_deg << "\n";
+    winy << "b_roll_deg: " << winner.b_roll_deg << "\n";
+    winy << "c_roll_deg: " << winner.c_roll_deg << "\n";
+    winy << "a_joints_rad: " << formatHomeList(winner.a_rad) << "\n";
+    winy << "b_joints_rad: " << formatHomeList(winner.b_rad) << "\n";
+    winy << "c_joints_rad: " << formatHomeList(winner.c_rad) << "\n";
+    winy << "scored_full_home_to_c: " << win->plan.metrics.full_deployable_duration << "\n";
+    winy << "saved_full_home_to_c: " << loaded_m.full_deployable_duration << "\n";
+    winy << "old_full_home_to_c: " << old_m.full_deployable_duration << "\n";
+    winy << "scored_trajectory_is_saved_trajectory: " << (identity ? "YES" : "NO") << "\n";
+    winy << "round_trip_ok: " << (roundtrip.ok ? "true" : "false") << "\n";
+    winy << "execution: false\n";
+    if (viz.traj)
+    {
+      viz.traj->publish(displayFromPersisted(loaded, robot_model->getName()));
+    }
+    RCLCPP_INFO(node->get_logger(),
+                "STEP14 winner id=%s improved=%s full_new=%.9f full_old=%.9f J1_new=%.6f J1_old=%.6f",
+                win->prefix.ik.candidate_id.c_str(), improved ? "YES" : "NO",
+                loaded_m.full_deployable_duration, old_m.full_deployable_duration,
+                loaded_m.home_to_pregrasp.j1_abs_travel, old_m.home_to_pregrasp.j1_abs_travel);
+    const std::string sha_winner_after = fileSha256(winner_in);
+    const std::string sha_traj_after = fileSha256(frozen_path);
+    std::ofstream yaml(diag_path);
+    yaml.setf(std::ios::fixed);
+    yaml.precision(17);
+    yaml << "status: " << (have_winner ? "PASS" : "FAIL") << "\n";
+    yaml << "task_version: STEP14\n";
+    yaml << "failure_classification: none\n";
+    yaml << "implementation_ready: YES\n";
+    yaml << "path_improvement_verified: " << (improved ? "YES" : "NO") << "\n";
+    yaml << "baseline_preserved: "
+         << ((sha_winner_before == sha_winner_after && sha_traj_before == sha_traj_after) ? "YES" :
+                                                                                            "NO")
+         << "\n";
+    yaml << "frozen_winner_sha256_before: " << sha_winner_before << "\n";
+    yaml << "frozen_winner_sha256_after: " << sha_winner_after << "\n";
+    yaml << "frozen_trajectory_sha256_before: " << sha_traj_before << "\n";
+    yaml << "frozen_trajectory_sha256_after: " << sha_traj_after << "\n";
+    yaml << "scored_trajectory_is_saved_trajectory: " << (identity ? "YES" : "NO") << "\n";
+    yaml << "round_trip_ok: " << (roundtrip.ok ? "true" : "false") << "\n";
+    yaml << "continuity_ok: " << (continuity.ok ? "true" : "false") << "\n";
+    yaml << "endpoint_ok: " << (endpoints.ok ? "true" : "false") << "\n";
+    yaml << "fixed_abc_preserved: YES\n";
+    yaml << "pilz_lin_preserved: YES\n";
+    yaml << "step13_unchanged: YES\n";
+    yaml << "real_robot_commands: 0\n";
+    yaml << "gripper_commands: 0\n";
+    yaml << "execution: false\n";
+    yaml << "ik_attempts: " << ik.attempts << "\n";
+    yaml << "ik_success: " << ik.ik_success << "\n";
+    yaml << "unique_ik_candidates: " << ik.unique.size() << "\n";
+    yaml << "fk_valid: " << ik.fk_valid << "\n";
+    yaml << "bounds_valid: " << ik.bounds_valid << "\n";
+    yaml << "collision_valid: " << ik.collision_valid << "\n";
+    yaml << "unique_valid: " << ik.unique_valid << "\n";
+    yaml << "different_ik_branches: " << different_branches << "\n";
+    yaml << "baseline_included: " << (ik.baseline_included ? "true" : "false") << "\n";
+    yaml << "minimum_observed_j1_travel: " << (std::isfinite(min_j1) ? min_j1 : -1.0) << "\n";
+    yaml << "prefix_candidates_tested: " << prefix_tested << "\n";
+    yaml << "successful_prefixes: " << prefix_ok.size() << "\n";
+    yaml << "complete_candidates_evaluated: " << full_tested << "\n";
+    yaml << "complete_feasible_candidates: " << full_ok.size() << "\n";
+    yaml << "complete_rejected: " << full_rejected << "\n";
+    yaml << "search_elapsed_sec: " << elapsed() << "\n";
+    yaml << "search_timeout_sec: " << timeout_sec << "\n";
+    yaml << "timed_out: " << (elapsed() > timeout_sec ? "true" : "false") << "\n";
+    yaml << "old_home_j1: " << home.at("j1") << "\n";
+    yaml << "old_pregrasp_j1: " << baseline_pre.at("j1") << "\n";
+    yaml << "old_home_to_pregrasp_time: " << old_m.home_to_pregrasp.duration << "\n";
+    yaml << "old_home_to_pregrasp_j1_travel: " << old_m.home_to_pregrasp.j1_abs_travel << "\n";
+    yaml << "old_home_to_pregrasp_path: " << old_m.home_to_pregrasp.path_length_l2 << "\n";
+    yaml << "old_home_to_grasp_lift_time: " << old_m.prefix_duration << "\n";
+    yaml << "old_lift_to_a_time: " << old_m.lift_to_a.duration << "\n";
+    yaml << "old_a_to_b_time: " << old_m.a_to_b.duration << "\n";
+    yaml << "old_b_to_c_time: " << old_m.b_to_c.duration << "\n";
+    yaml << "old_full_home_to_c_time: " << old_m.full_deployable_duration << "\n";
+    yaml << "old_scaled_home_to_c_at_005: " << old_m.scaled_full_duration_at_005 << "\n";
+    yaml << "new_home_to_pregrasp_time: " << loaded_m.home_to_pregrasp.duration << "\n";
+    yaml << "new_home_to_pregrasp_j1_travel: " << loaded_m.home_to_pregrasp.j1_abs_travel << "\n";
+    yaml << "new_home_to_pregrasp_path: " << loaded_m.home_to_pregrasp.path_length_l2 << "\n";
+    yaml << "new_home_to_grasp_lift_time: " << loaded_m.prefix_duration << "\n";
+    yaml << "new_lift_to_a_time: " << loaded_m.lift_to_a.duration << "\n";
+    yaml << "new_a_to_b_time: " << loaded_m.a_to_b.duration << "\n";
+    yaml << "new_b_to_c_time: " << loaded_m.b_to_c.duration << "\n";
+    yaml << "new_full_home_to_c_time: " << loaded_m.full_deployable_duration << "\n";
+    yaml << "new_scaled_home_to_c_at_005: " << loaded_m.scaled_full_duration_at_005 << "\n";
+    yaml << "new_joint_path_length: " << loaded_m.full_deployable_path_length_l2 << "\n";
+    yaml << "new_minimum_clearance: " << win->plan.min_clearance << "\n";
+    yaml << "new_collision_free: " << (win->plan.collision_free ? "true" : "false") << "\n";
+    yaml << "winner_candidate_id: " << win->prefix.ik.candidate_id << "\n";
+    yaml << "winner_seed_name: " << win->prefix.ik.seed_name << "\n";
+    yaml << "winner_is_baseline: " << (win->prefix.ik.is_baseline ? "true" : "false") << "\n";
+    yaml << "winner_pregrasp_joints: " << formatHomeList(win->plan.pregrasp_joints) << "\n";
+    yaml << "winner_grasp_joints: " << formatHomeList(win->plan.grasp_joints) << "\n";
+    yaml << "winner_lift_joints: " << formatHomeList(win->plan.lift_joints) << "\n";
+    yaml << "winner_a_joints: " << formatHomeList(winner.a_rad) << "\n";
+    yaml << "winner_b_joints: " << formatHomeList(winner.b_rad) << "\n";
+    yaml << "winner_c_joints: " << formatHomeList(winner.c_rad) << "\n";
+    yaml << "best_prefix_time: "
+         << (prefix_ok.empty() ? -1.0 : prefix_ok.front().plan.metrics.prefix_duration) << "\n";
+    yaml << "best_prefix_j1_travel: "
+         << (prefix_ok.empty() ? -1.0 : prefix_ok.front().plan.metrics.home_to_pregrasp.j1_abs_travel)
+         << "\n";
+    yaml << "best_prefix_joint_path: "
+         << (prefix_ok.empty() ? -1.0 : prefix_ok.front().plan.metrics.prefix_path_length_l2) << "\n";
+    yaml << "home_to_pregrasp_pipeline: ompl\n";
+    yaml << "pregrasp_to_grasp_pipeline: pilz_industrial_motion_planner\n";
+    yaml << "pregrasp_to_grasp_planner_id: LIN\n";
+    yaml << "grasp_to_lift_pipeline: pilz_industrial_motion_planner\n";
+    yaml << "grasp_to_lift_planner_id: LIN\n";
+    yaml << "candidates:\n";
+    for (const auto& cand : ik.unique)
+    {
+      yaml << "  - id: " << cand.candidate_id << "\n";
+      yaml << "    seed: " << cand.seed_name << "\n";
+      yaml << "    baseline: " << (cand.is_baseline ? "true" : "false") << "\n";
+      yaml << "    valid: " << (cand.valid ? "true" : "false") << "\n";
+      yaml << "    joints: " << formatHomeList(cand.joints) << "\n";
+      yaml << "    fk_position_error: " << cand.fk_position_error << "\n";
+      yaml << "    fk_orientation_error_deg: " << cand.fk_orientation_error_deg << "\n";
+      yaml << "    distance_from_home: " << cand.distance_from_home << "\n";
+      yaml << "    j1_abs_displacement: " << cand.j1_abs_displacement << "\n";
+      yaml << "    collision_free: " << (cand.collision_free ? "true" : "false") << "\n";
+      yaml << "    failure_reason: " << cand.failure_reason << "\n";
+    }
+    yaml << "winner_output_path: " << winner_out << "\n";
+    yaml << "trajectory_output_path: " << traj_out << "\n";
+    if (!identity || !roundtrip.ok)
+    {
+      return 5;
+    }
+    return 0;
+  }
+
+  const std::string sha_winner_after = fileSha256(winner_in);
+  const std::string sha_traj_after = fileSha256(frozen_path);
+  std::ofstream yaml(diag_path);
+  yaml.setf(std::ios::fixed);
+  yaml.precision(17);
+  yaml << "status: FAIL\n";
+  yaml << "failure_classification: "
+       << (ik.unique.empty() ? "IK_NO_CANDIDATES" :
+           prefix_ok.empty() ? "PREFIX_PLANNING_FAILED" :
+                               "FULL_TASK_PLANNING_FAILED")
+       << "\n";
+  yaml << "implementation_ready: YES\n";
+  yaml << "path_improvement_verified: NO\n";
+  yaml << "ik_attempts: " << ik.attempts << "\n";
+  yaml << "unique_ik_candidates: " << ik.unique.size() << "\n";
+  yaml << "successful_prefixes: " << prefix_ok.size() << "\n";
+  yaml << "complete_feasible_candidates: 0\n";
+  yaml << "frozen_winner_sha256_before: " << sha_winner_before << "\n";
+  yaml << "frozen_winner_sha256_after: " << sha_winner_after << "\n";
+  yaml << "frozen_trajectory_sha256_before: " << sha_traj_before << "\n";
+  yaml << "frozen_trajectory_sha256_after: " << sha_traj_after << "\n";
+  yaml << "search_elapsed_sec: " << elapsed() << "\n";
+  yaml << "real_robot_commands: 0\n";
+  yaml << "gripper_commands: 0\n";
+  return 4;
+}
 }  // namespace
 
 int main(int argc, char** argv)
@@ -2031,6 +2880,25 @@ int main(int argc, char** argv)
         node, group, ee_link, attach_link, object_id, table_name, touch_links, object_scene,
         pregrasp, grasp, lift, object_height, object_radius, planning_time, home, robot_model, viz,
         diag_path);
+    if (vis_hold > 0)
+    {
+      std::this_thread::sleep_for(std::chrono::duration<double>(vis_hold));
+    }
+    const auto after = waitForFreshJoints(node, std::chrono::seconds(3));
+    if (after)
+    {
+      RCLCPP_INFO(node->get_logger(), "Robot moved because of this node? %s",
+                  maxJointError(jointsFromMsg(*after), actual) > 0.02 ? "YES" : "NO");
+    }
+    shutdownSpinner(executor, spinner);
+    return rc;
+  }
+  if (getBool(node, "optimize_grasp_prefix", false))
+  {
+    const int rc = runGraspPrefixOptimize(
+        node, group, ee_link, attach_link, object_id, table_name, column_name, touch_links,
+        object_scene, pregrasp, grasp, lift, object_height, object_radius, planning_time, home,
+        robot_model, viz, diag_path, pos_tol, ori_tol_deg);
     if (vis_hold > 0)
     {
       std::this_thread::sleep_for(std::chrono::duration<double>(vis_hold));

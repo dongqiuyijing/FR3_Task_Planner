@@ -124,6 +124,9 @@ struct PersistValidation
 
 const std::vector<double> kStep12cHomeRad = { -2.271411675804, -1.642863047968, -1.869634009789,
                                               -2.871167788011, -0.003375517130, 0.839900045153 };
+const std::vector<double> kStep12cPreGraspRad = { 0.57500734151881538, 0.080108799189785709,
+                                                 0.42216656438396238, -0.5026105606215312,
+                                                 2.9312401464858437, 0.78508658494830352 };
 const std::vector<double> kStep12cARad = { 0.761386084, -0.642747728, 1.360379768,
                                            0.853167960, 1.570792654, -0.024008243 };
 const std::vector<double> kStep12cBRad = { 0.128839903, -0.765711154, 2.071148432,
@@ -164,4 +167,44 @@ PersistValidation validateContinuity(const PersistedTrajectory& traj, double tol
 PersistValidation validateEndpoints(const PersistedTrajectory& traj, const WinnerEndpoints& winner,
                                     double tol = 1e-4);
 bool timesMonotonic(const TrajectorySegmentRecord& seg);
+
+const TrajectorySegmentRecord* firstLogicalSegment(const PersistedTrajectory& traj,
+                                                   const std::string& logical);
+const TrajectorySegmentRecord* lastLogicalSegment(const PersistedTrajectory& traj,
+                                                  const std::string& logical);
+double jointAbsTravel(const TrajectorySegmentRecord& seg, const std::string& joint);
+double allJointAbsTravel(const TrajectorySegmentRecord& seg);
+
+struct LogicalMetrics
+{
+  bool present = false;
+  std::string logical;
+  double duration = 0.0;
+  double path_length_l2 = 0.0;
+  double all_joint_abs_travel = 0.0;
+  double j1_abs_travel = 0.0;
+  std::vector<double> start_joints;
+  std::vector<double> end_joints;
+  size_t point_count = 0;
+  size_t segment_count = 0;
+};
+
+struct FrozenTaskMetrics
+{
+  LogicalMetrics current_to_home;
+  LogicalMetrics home_to_pregrasp;
+  LogicalMetrics pregrasp_to_grasp;
+  LogicalMetrics grasp_to_lift;
+  LogicalMetrics lift_to_a;
+  LogicalMetrics a_to_b;
+  LogicalMetrics b_to_c;
+  double prefix_duration = 0.0;
+  double prefix_path_length_l2 = 0.0;
+  double full_deployable_duration = 0.0;
+  double full_deployable_path_length_l2 = 0.0;
+  double scaled_full_duration_at_005 = 0.0;
+};
+
+LogicalMetrics logicalMetrics(const PersistedTrajectory& traj, const std::string& logical);
+FrozenTaskMetrics computeFrozenTaskMetrics(const PersistedTrajectory& traj);
 }  // namespace fr_task_planner

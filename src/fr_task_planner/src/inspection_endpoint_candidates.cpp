@@ -212,6 +212,16 @@ double jointL2(const std::map<std::string, double>& a, const std::map<std::strin
   return std::sqrt(acc);
 }
 
+double jointL1(const std::map<std::string, double>& a, const std::map<std::string, double>& b)
+{
+  double acc = 0.0;
+  for (const auto& name : kArmJoints)
+  {
+    acc += std::abs(a.at(name) - b.at(name));
+  }
+  return acc;
+}
+
 double maxJointError(const std::map<std::string, double>& a, const std::map<std::string, double>& b)
 {
   double max_error = 0.0;

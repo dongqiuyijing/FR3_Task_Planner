@@ -175,6 +175,59 @@ def _launch_nodes(context, *args, **kwargs):
         LaunchConfiguration("visualize_saved_trajectory").perform(context).lower() == "true"
     )
     params["full_plan_retries"] = int(LaunchConfiguration("full_plan_retries").perform(context))
+    params["optimize_grasp_prefix"] = (
+        LaunchConfiguration("optimize_grasp_prefix").perform(context).lower() == "true"
+    )
+    if params["optimize_grasp_prefix"]:
+        frozen_winner = os.path.expanduser(
+            "~/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_winner.yaml"
+        )
+        frozen_traj = os.path.expanduser(
+            "~/fr_task_ws/src/fr_task_planner/config/"
+            "step12c_tilted_camera_winner_trajectory.yaml"
+        )
+        frozen_diag = os.path.expanduser(
+            "~/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_diagnostics.yaml"
+        )
+        if os.path.abspath(params["winner_output_path"]) == os.path.abspath(frozen_winner):
+            params["winner_output_path"] = os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/step14_optimized_grasp_winner.yaml"
+            )
+        if os.path.abspath(params["trajectory_output_path"]) == os.path.abspath(frozen_traj):
+            params["trajectory_output_path"] = os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/"
+                "step14_optimized_grasp_trajectory.yaml"
+            )
+        if os.path.abspath(params["diagnostic_output_path"]) == os.path.abspath(frozen_diag):
+            params["diagnostic_output_path"] = os.path.expanduser(
+                "~/fr_task_ws/src/fr_task_planner/config/"
+                "step14_grasp_optimization_diagnostics.yaml"
+            )
+    params["max_pregrasp_ik_candidates"] = int(
+        LaunchConfiguration("max_pregrasp_ik_candidates").perform(context)
+    )
+    params["max_prefix_plan_candidates"] = int(
+        LaunchConfiguration("max_prefix_plan_candidates").perform(context)
+    )
+    params["max_full_task_candidates"] = int(
+        LaunchConfiguration("max_full_task_candidates").perform(context)
+    )
+    params["full_candidate_plan_attempts"] = int(
+        LaunchConfiguration("full_candidate_plan_attempts").perform(context)
+    )
+    params["max_ik_attempts"] = int(LaunchConfiguration("max_ik_attempts").perform(context))
+    params["step14_search_timeout_sec"] = float(
+        LaunchConfiguration("step14_search_timeout_sec").perform(context)
+    )
+    params["step14_prefix_planning_time"] = float(
+        LaunchConfiguration("step14_prefix_planning_time").perform(context)
+    )
+    params["step14_full_planning_time"] = float(
+        LaunchConfiguration("step14_full_planning_time").perform(context)
+    )
+    params["frozen_trajectory_path"] = LaunchConfiguration("frozen_trajectory_path").perform(
+        context
+    )
     params["camera_design_x"] = STEP12C_CAMERA_POSITION[0]
     params["camera_design_y"] = STEP12C_CAMERA_POSITION[1]
     params["camera_design_z"] = STEP12C_CAMERA_POSITION[2]
@@ -226,6 +279,7 @@ def _launch_nodes(context, *args, **kwargs):
     start_stage4 = LaunchConfiguration("start_stage4").perform(context).lower() == "true"
     visualize = LaunchConfiguration("visualize_search").perform(context).lower() == "true"
     persist_only = LaunchConfiguration("winner_replay_only").perform(context).lower() == "true"
+    optimize_prefix = LaunchConfiguration("optimize_grasp_prefix").perform(context).lower() == "true"
     if start_stage4 and delay < 1.0:
         delay = 18.0
     pkg_share = get_package_share_directory("fr_task_planner")
@@ -265,7 +319,11 @@ def _launch_nodes(context, *args, **kwargs):
                     (
                         "========== STEP 12D WINNER TRAJECTORY PERSIST =========="
                         if persist_only
-                        else "========== STEP 12C TILTED-CAMERA FIXED-ABC SEARCH =========="
+                        else (
+                            "========== STEP 14 GRASP PREFIX OPTIMIZATION =========="
+                            if optimize_prefix
+                            else "========== STEP 12C TILTED-CAMERA FIXED-ABC SEARCH =========="
+                        )
                     ),
                     f"ROS_DOMAIN_ID={_ROS_DOMAIN_ID}",
                     (
@@ -351,6 +409,22 @@ def generate_launch_description():
             DeclareLaunchArgument("winner_input_path", default_value=default_winner_input),
             DeclareLaunchArgument("trajectory_output_path", default_value=default_traj),
             DeclareLaunchArgument("winner_replay_only", default_value="false"),
+            DeclareLaunchArgument("optimize_grasp_prefix", default_value="false"),
+            DeclareLaunchArgument("max_pregrasp_ik_candidates", default_value="24"),
+            DeclareLaunchArgument("max_prefix_plan_candidates", default_value="12"),
+            DeclareLaunchArgument("max_full_task_candidates", default_value="6"),
+            DeclareLaunchArgument("full_candidate_plan_attempts", default_value="3"),
+            DeclareLaunchArgument("max_ik_attempts", default_value="96"),
+            DeclareLaunchArgument("step14_search_timeout_sec", default_value="900.0"),
+            DeclareLaunchArgument("step14_prefix_planning_time", default_value="5.0"),
+            DeclareLaunchArgument("step14_full_planning_time", default_value="8.0"),
+            DeclareLaunchArgument(
+                "frozen_trajectory_path",
+                default_value=os.path.expanduser(
+                    "~/fr_task_ws/src/fr_task_planner/config/"
+                    "step12c_tilted_camera_winner_trajectory.yaml"
+                ),
+            ),
             DeclareLaunchArgument("visualize_saved_trajectory", default_value="true"),
             DeclareLaunchArgument("full_plan_retries", default_value="5"),
             IncludeLaunchDescription(

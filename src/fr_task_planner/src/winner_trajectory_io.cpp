@@ -927,4 +927,101 @@ bool timesMonotonic(const TrajectorySegmentRecord& seg)
   }
   return !seg.points.empty() && segmentDuration(seg) > 0.0;
 }
+
+const TrajectorySegmentRecord* firstLogicalSegment(const PersistedTrajectory& traj,
+                                                   const std::string& logical)
+{
+  return firstLogical(traj, logical);
+}
+
+const TrajectorySegmentRecord* lastLogicalSegment(const PersistedTrajectory& traj,
+                                                  const std::string& logical)
+{
+  return lastLogical(traj, logical);
+}
+
+double jointAbsTravel(const TrajectorySegmentRecord& seg, const std::string& joint)
+{
+  double acc = 0.0;
+  double prev = 0.0;
+  bool have = false;
+  for (const auto& pt : seg.points)
+  {
+    const auto arm = extractArmPositions(seg.joint_names, pt.positions);
+    const auto joints = vecToJoints(arm);
+    const auto it = joints.find(joint);
+    if (it == joints.end() || !std::isfinite(it->second))
+    {
+      continue;
+    }
+    if (have)
+    {
+      acc += std::abs(it->second - prev);
+    }
+    prev = it->second;
+    have = true;
+  }
+  return acc;
+}
+
+double allJointAbsTravel(const TrajectorySegmentRecord& seg)
+{
+  double acc = 0.0;
+  for (const auto& name : kArmJoints)
+  {
+    acc += jointAbsTravel(seg, name);
+  }
+  return acc;
+}
+
+LogicalMetrics logicalMetrics(const PersistedTrajectory& traj, const std::string& logical)
+{
+  LogicalMetrics m;
+  m.logical = logical;
+  std::vector<TrajectorySegmentRecord> parts;
+  for (const auto& seg : traj.segments)
+  {
+    if (seg.logical_segment == logical)
+    {
+      parts.push_back(seg);
+    }
+  }
+  if (parts.empty())
+  {
+    return m;
+  }
+  m.present = true;
+  m.segment_count = parts.size();
+  m.start_joints = segmentStartArm(parts.front());
+  m.end_joints = segmentEndArm(parts.back());
+  for (const auto& seg : parts)
+  {
+    m.duration += segmentDuration(seg);
+    m.path_length_l2 += computePathLength({ seg }, false);
+    m.all_joint_abs_travel += allJointAbsTravel(seg);
+    m.j1_abs_travel += jointAbsTravel(seg, "j1");
+    m.point_count += seg.points.size();
+  }
+  return m;
+}
+
+FrozenTaskMetrics computeFrozenTaskMetrics(const PersistedTrajectory& traj)
+{
+  FrozenTaskMetrics out;
+  out.current_to_home = logicalMetrics(traj, kLogicalCurrentToHome);
+  out.home_to_pregrasp = logicalMetrics(traj, kLogicalHomeToPreGrasp);
+  out.pregrasp_to_grasp = logicalMetrics(traj, kLogicalPreGraspToGrasp);
+  out.grasp_to_lift = logicalMetrics(traj, kLogicalGraspToLift);
+  out.lift_to_a = logicalMetrics(traj, kLogicalLiftToA);
+  out.a_to_b = logicalMetrics(traj, kLogicalAToB);
+  out.b_to_c = logicalMetrics(traj, kLogicalBToC);
+  out.prefix_duration =
+      out.home_to_pregrasp.duration + out.pregrasp_to_grasp.duration + out.grasp_to_lift.duration;
+  out.prefix_path_length_l2 = out.home_to_pregrasp.path_length_l2 +
+                              out.pregrasp_to_grasp.path_length_l2 + out.grasp_to_lift.path_length_l2;
+  out.full_deployable_duration = computeDuration(traj.segments, true);
+  out.full_deployable_path_length_l2 = computePathLength(traj.segments, true);
+  out.scaled_full_duration_at_005 = out.full_deployable_duration / 0.05;
+  return out;
+}
 }  // namespace fr_task_planner

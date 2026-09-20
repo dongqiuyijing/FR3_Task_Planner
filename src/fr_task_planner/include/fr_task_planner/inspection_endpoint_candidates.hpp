@@ -169,6 +169,7 @@ geometry_msgs::msg::Pose isoToPose(const Eigen::Isometry3d& transform);
 void poseError(const Eigen::Isometry3d& a, const Eigen::Isometry3d& b, double& position_m,
                double& orientation_deg);
 double jointL2(const std::map<std::string, double>& a, const std::map<std::string, double>& b);
+double jointL1(const std::map<std::string, double>& a, const std::map<std::string, double>& b);
 double maxJointError(const std::map<std::string, double>& a, const std::map<std::string, double>& b);
 std::map<std::string, double> jointsFromState(const moveit::core::RobotState& state);
 void applyJoints(moveit::core::RobotState& state, const std::map<std::string, double>& joints);

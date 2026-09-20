@@ -129,6 +129,7 @@ ament_target_dependencies(fr3_mtc_full_order_test
 add_library(fr_task_planner_endpoints
   src/inspection_endpoint_candidates.cpp
   src/inspection_visibility.cpp
+  src/pregrasp_ik_candidates.cpp
 )
 target_include_directories(fr_task_planner_endpoints PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -321,6 +322,30 @@ target_compile_definitions(test_fr3_frozen_executor PRIVATE
   FR_TASK_PLANNER_TRAJ_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step12c_tilted_camera_winner_trajectory.yaml"
 )
 
+add_executable(test_step14_grasp_prefix test/test_step14_grasp_prefix.cpp)
+target_include_directories(test_step14_grasp_prefix PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(test_step14_grasp_prefix
+  fr_task_planner_endpoints
+  fr_task_planner_trajectory
+  yaml-cpp
+)
+ament_target_dependencies(test_step14_grasp_prefix
+  rclcpp
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  geometric_shapes
+)
+target_compile_definitions(test_step14_grasp_prefix PRIVATE
+  FR_TASK_PLANNER_TRAJ_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step12c_tilted_camera_winner_trajectory.yaml"
+  FR_TASK_PLANNER_WINNER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step12c_tilted_camera_winner.yaml"
+  FR_TASK_PLANNER_STEP14_TRAJ_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step14_optimized_grasp_trajectory.yaml"
+  FR_TASK_PLANNER_STEP14_WINNER_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step14_optimized_grasp_winner.yaml"
+  FR_TASK_PLANNER_STEP14_DIAG_PATH="${CMAKE_CURRENT_SOURCE_DIR}/config/step14_grasp_optimization_diagnostics.yaml"
+)
+
 install(TARGETS
   fr3_mtc_smoke_test
   fr3_mtc_pregrasp_test
@@ -339,6 +364,7 @@ install(TARGETS
   fr3_mtc_complete_abc_search
   fr3_real_frozen_trajectory_executor
   test_fr3_frozen_executor
+  test_step14_grasp_prefix
   DESTINATION lib/${PROJECT_NAME}
 )
 
