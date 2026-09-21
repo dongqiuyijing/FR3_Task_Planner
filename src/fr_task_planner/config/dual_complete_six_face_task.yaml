@@ -1,0 +1,29 @@
+# DUAL-7 complete dual-arm six-face model demo. PLAN ONLY.
+# Does not change frozen P1/D1, six-face allocation, handover geometry, or ACM.
+
+max_planning_attempts: 5
+planning_time_sec: 10.0
+max_validation_joint_step: 0.02
+chain_joint_continuity_tol_rad: 0.0001
+preview_yaml: /tmp/dual7_preview.yaml
+step15_trajectory: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step15_optimized_lift_to_a_trajectory.yaml
+dual5t_preview: /tmp/dual5t_preview.yaml
+handover_yaml: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/dual_handover.yaml
+
+# Matching identity is joint vectors, not candidate numbers.
+# These are the DUAL-5-T best-tested chain joints (A1+B_pre2+B_handover3).
+handover_a: [0.091647, 0.755576, -1.755859, -0.570517, -1.570793, -3.049949]
+handover_b: [-1.662443, -3.872529, 1.754164, -2.594020, 1.570793, -0.091643]
+pre_b: [-1.662442, -3.198354, 1.401150, -2.915181, 1.570793, -0.091642]
+home_a: [-2.271411675804, -1.642863047968, -1.869634009789, -2.871167788011, -0.003375517130, 0.839900045153]
+i1_b: [-2.661007, -3.632159, 0.949828, -3.023696, 1.982707, 1.040410]
+i2_b: [-2.661007, -3.632159, 0.949828, -3.023696, 1.982707, -2.101183]
+i3_b: [-1.963019, -3.573773, 0.345745, -3.055156, 1.178574, 2.356201]
+i1_roll_deg: -150.0
+i2_roll_deg: -150.0
+i3_roll_deg: 0.0
+
+q_a_open: 0.0
+q_a_grasp: 0.083
+q_b_open: 0.0
+q_b_hold: 0.083

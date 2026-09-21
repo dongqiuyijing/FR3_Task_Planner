@@ -1,0 +1,46 @@
+# DUAL-6: Arm B H→I1→I2→I3 time-first optimization.
+# Inspection geometry remains dual_arm_b_inspection_sequence.yaml.
+# Do not put fake velocity/acceleration limits here. Those come from RobotModel.
+
+max_planning_attempts: 5
+planning_time_sec: 10.0
+max_validation_joint_step: 0.02
+home_arrival_tol_rad: 0.0001
+chain_joint_continuity_tol_rad: 0.0001
+tcp_position_tol_m: 0.001
+tcp_orientation_tol_deg: 1.0
+object_position_tol_m: 0.001
+object_orientation_tol_deg: 1.0
+face_center_tol_m: 0.002
+face_normal_tol_deg: 3.0
+min_ik_solution_distance: 0.1
+max_ik_candidates_per_target: 8
+max_contacts: 1000
+max_contacts_per_pair: 20
+nominal_opening_seed: 0.083
+arm_a_grasp_q: 0.083
+arm_b_open_q: 0.0
+arm_b_receive_q: 0.083
+gripper_step_q: 0.002
+cartesian_step_m: 0.005
+densify_min_cartesian_m: 0.001
+max_adjacent_joint_jump_rad: 0.35
+ik_timeout_path: 0.25
+
+optimization:
+  priority: time_first
+  ompl_attempts_per_edge: 5
+  time_near_optimal_ratio: 0.05
+  joint_direction_epsilon_rad: 0.005
+  max_validation_joint_step_rad: 0.02
+  prefer_low_j1: true
+  prefer_meaningful_j6: true
+  reject_gratuitous_j6_full_turn: true
+
+ompl_attempts_per_edge: 5
+time_near_optimal_ratio: 0.05
+joint_direction_epsilon_rad: 0.005
+max_validation_joint_step_rad: 0.02
+prefer_low_j1: true
+prefer_meaningful_j6: true
+reject_gratuitous_j6_full_turn: true

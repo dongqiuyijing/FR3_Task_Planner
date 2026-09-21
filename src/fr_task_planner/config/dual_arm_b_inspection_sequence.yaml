@@ -1,0 +1,96 @@
+# DUAL-5-S: Arm B remaining inspection sequence after six-face correction.
+# Arm A (read-only, STEP12C ARM1): side_pos_y, side_neg_y, bottom_circle.
+# Arm B must inspect the complementary set: side_pos_x, side_neg_x, top_circle.
+# I1/I2 object poses are regenerated from launch/dual5s_side_x_geometry.py using
+# inspection_view_geometry.compute_view_target at the same STEP12C P1/D1.
+# They are NOT a string rename of STEP12C winner A/B (those are +Y/-Y).
+# I3 remains ORIGINAL_TOP_CIRCLE from DUAL-5-R.
+# Does not rewrite step12c_tilted_camera_winner.yaml.
+
+max_planning_attempts: 5
+planning_time_sec: 10.0
+max_validation_joint_step: 0.02
+home_arrival_tol_rad: 0.0001
+chain_joint_continuity_tol_rad: 0.0001
+tcp_position_tol_m: 0.001
+tcp_orientation_tol_deg: 1.0
+object_position_tol_m: 0.001
+object_orientation_tol_deg: 1.0
+face_center_tol_m: 0.002
+face_normal_tol_deg: 3.0
+min_ik_solution_distance: 0.1
+max_ik_candidates_per_target: 8
+max_plan_ik_per_face: 6
+roll_coarse_step_deg: 30.0
+roll_refine_step_deg: 10.0
+preview_yaml: /tmp/dual5t_preview.yaml
+max_contacts: 1000
+max_contacts_per_pair: 20
+nominal_opening_seed: 0.083
+arm_a_grasp_q: 0.083
+arm_b_open_q: 0.0
+arm_b_receive_q: 0.083
+gripper_step_q: 0.002
+cartesian_step_m: 0.005
+densify_min_cartesian_m: 0.001
+max_adjacent_joint_jump_rad: 0.35
+ik_timeout_path: 0.25
+
+# User correction for Arm B side faces. Complements Arm A {+Y,-Y,-Z}.
+inspection_order: [side_pos_x, side_neg_x, top_circle]
+inspection_order_source: DUAL-5-S user-required complementary X sides + ORIGINAL_TOP_CIRCLE
+inspection_p1_source: config/step12c_tilted_camera_winner.yaml:p1
+inspection_d1_source: config/step12c_tilted_camera_winner.yaml:surface_target_normal
+
+# Arm A assignment is read-only (STEP12C ARM1). DUAL-5-S must not replan Arm A.
+arm_a_inspection_order: [side_pos_y, side_neg_y, bottom_circle]
+arm_a_order_source: config/step12c_tilted_camera_winner.yaml:order / launch/inspection_view_geometry.py:attach_bottom_circle_view/arm1_views
+
+# Object-frame view geometry.
+# +X/-X object_world is canonical preferred-roll from
+# dual5s_side_x_geometry.compute_side_x_targets() -> compute_view_target()
+# at apply_step12c_tilted_geometry() P1/D1. Radial sides share object XYZ
+# (P1 - r*D1) and differ by object orientation (which local axis maps to D1).
+# Arm B TCP is NOT copied from ARM1 tcp_pose; C++ derives it via T_tcpB_object.
+inspection_views:
+  side_pos_x:
+    winner_key: ""
+    source: launch/dual5s_side_x_geometry.py:compute_side_x_targets/side_pos_x.object_pose
+    view_source: launch/dual5s_side_x_geometry.py:make_side_pos_x_view
+    geometry_function: launch/inspection_view_geometry.py:compute_view_target
+    physical_face: SIDE_POS_X
+    physical_id: "+X"
+    roll_deg: 0.0
+    center_in_object: [0.0075, 0.0, 0.0]
+    normal_in_object: [1.0, 0.0, 0.0]
+    up_in_object: [0.0, 0.0, 1.0]
+    object_world:
+      xyz: [0.000000000, 0.305303300, 1.194696698]
+      xyzw: [-0.270598103, -0.270598103, -0.653281460, 0.653281460]
+  side_neg_x:
+    winner_key: ""
+    source: launch/dual5s_side_x_geometry.py:compute_side_x_targets/side_neg_x.object_pose
+    view_source: launch/dual5s_side_x_geometry.py:make_side_neg_x_view
+    geometry_function: launch/inspection_view_geometry.py:compute_view_target
+    physical_face: SIDE_NEG_X
+    physical_id: "-X"
+    roll_deg: 0.0
+    center_in_object: [-0.0075, 0.0, 0.0]
+    normal_in_object: [-1.0, 0.0, 0.0]
+    up_in_object: [0.0, 0.0, 1.0]
+    object_world:
+      xyz: [0.000000000, 0.305303300, 1.194696698]
+      xyzw: [-0.270598103, 0.270598103, 0.653281460, 0.653281460]
+  top_circle:
+    winner_key: ""
+    source: launch/inspection_view_geometry.py:apply_step12c_tilted_geometry/targets/top_circle.object_pose
+    view_source: launch/inspection_view_geometry.py:required_cylinder_views/top_circle
+    physical_face: ORIGINAL_TOP_CIRCLE
+    physical_id: "+Z"
+    roll_deg: 0.0
+    center_in_object: [0.0, 0.0, 0.0175]
+    normal_in_object: [0.0, 0.0, 1.0]
+    up_in_object: [0.0, -1.0, 0.0]
+    object_world:
+      xyz: [0.000000000, 0.312374367, 1.187625629]
+      xyzw: [0.000000000, -0.382683357, 0.923879564, 0.000000000]

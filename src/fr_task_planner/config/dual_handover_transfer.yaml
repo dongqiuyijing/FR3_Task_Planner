@@ -1,0 +1,20 @@
+# DUAL-4D: gripper close/open sampling and local attachment transfer.
+# These values do not change DUAL-4A handover geometry.
+# Geometry still comes from dual_handover.yaml (read-only).
+
+cartesian_step_m: 0.005
+densify_min_cartesian_m: 0.001
+max_adjacent_joint_jump_rad: 0.35
+tcp_position_tol_m: 0.001
+tcp_orientation_tol_deg: 1.0
+ik_timeout_path: 0.25
+min_ik_solution_distance: 0.1
+max_contacts: 1000
+max_contacts_per_pair: 20
+nominal_opening_seed: 0.083
+arm_a_grasp_q: 0.083
+arm_b_open_q: 0.0
+arm_b_receive_q: 0.083
+gripper_step_q: 0.002
+object_position_tol_m: 0.001
+object_orientation_tol_deg: 1.0

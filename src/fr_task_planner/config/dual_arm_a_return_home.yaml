@@ -1,0 +1,23 @@
+# DUAL-4E: Arm A Handover → existing Home. Does not change DUAL-4A geometry.
+# Geometry still comes from dual_handover.yaml (read-only).
+
+max_planning_attempts: 5
+planning_time_sec: 10.0
+max_validation_joint_step: 0.02
+home_arrival_tol_rad: 0.0001
+tcp_position_tol_m: 0.001
+tcp_orientation_tol_deg: 1.0
+object_position_tol_m: 0.001
+object_orientation_tol_deg: 1.0
+min_ik_solution_distance: 0.1
+max_contacts: 1000
+max_contacts_per_pair: 20
+nominal_opening_seed: 0.083
+arm_a_grasp_q: 0.083
+arm_b_open_q: 0.0
+arm_b_receive_q: 0.083
+gripper_step_q: 0.002
+cartesian_step_m: 0.005
+densify_min_cartesian_m: 0.001
+max_adjacent_joint_jump_rad: 0.35
+ik_timeout_path: 0.25

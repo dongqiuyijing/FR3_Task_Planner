@@ -437,6 +437,199 @@ ament_target_dependencies(
   moveit_ros_planning_interface
 )
 
+# DUAL-4B-2: handover static collision. Local PlanningScene only. No execute.
+add_executable(
+  dual_handover_static_collision_test
+  src/dual_handover_static_collision_test.cpp
+)
+
+# DUAL-4B-2A: collision-source isolation. Local PlanningScene only. No execute.
+add_executable(
+  dual_collision_source_diagnostic
+  src/dual_collision_source_diagnostic.cpp
+)
+
+target_link_libraries(
+  dual_collision_source_diagnostic
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_collision_source_diagnostic
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  geometric_shapes
+)
+
+target_link_libraries(
+  dual_handover_static_collision_test
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_handover_static_collision_test
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
+# DUAL-4C: Arm B Cartesian straight-line approach. Local PlanningScene only. No execute.
+add_executable(
+  dual_handover_linear_approach_test
+  src/dual_handover_linear_approach_test.cpp
+)
+
+target_link_libraries(
+  dual_handover_linear_approach_test
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_handover_linear_approach_test
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
+# DUAL-4D: gripper close/open sampling and local attachment transfer. No execute.
+add_executable(
+  dual_handover_transfer_test
+  src/dual_handover_transfer_test.cpp
+)
+
+target_link_libraries(
+  dual_handover_transfer_test
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_handover_transfer_test
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
+# DUAL-4E: Arm A return Home while Arm B holds the part. PLAN ONLY.
+add_executable(
+  dual_arm_a_return_home_test
+  src/dual_arm_a_return_home_test.cpp
+)
+
+target_link_libraries(
+  dual_arm_a_return_home_test
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_arm_a_return_home_test
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
+# DUAL-6: Arm B remaining inspection sequence time-first optimization. PLAN ONLY.
+add_executable(
+  dual_arm_b_time_optimization_test
+  src/dual_arm_b_time_optimization_test.cpp
+)
+
+target_link_libraries(
+  dual_arm_b_time_optimization_test
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_arm_b_time_optimization_test
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
+# DUAL-6B: Arm B remaining inspection sequence joint-motion geometric optimization. PLAN ONLY.
+add_executable(
+  dual_arm_b_joint_motion_optimization_test
+  src/dual_arm_b_joint_motion_optimization_test.cpp
+)
+
+target_link_libraries(
+  dual_arm_b_joint_motion_optimization_test
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_arm_b_joint_motion_optimization_test
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
+# DUAL-5: Arm B remaining inspection sequence while holding small_part. PLAN ONLY.
+add_executable(
+  dual_arm_b_inspection_sequence_test
+  src/dual_arm_b_inspection_sequence_test.cpp
+)
+
+target_link_libraries(
+  dual_arm_b_inspection_sequence_test
+  yaml-cpp
+)
+
+ament_target_dependencies(
+  dual_arm_b_inspection_sequence_test
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
+# DUAL-7: complete dual-arm six-face model demo. PLAN ONLY.
+add_executable(
+  dual_complete_six_face_task_test
+  src/dual_complete_six_face_task_test.cpp
+)
+target_link_libraries(
+  dual_complete_six_face_task_test
+  yaml-cpp
+)
+ament_target_dependencies(
+  dual_complete_six_face_task_test
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
 install(TARGETS
   fr3_mtc_smoke_test
   fr3_mtc_pregrasp_test
@@ -461,11 +654,22 @@ install(TARGETS
   dual_arm_a_prefix_plan
   dual_arm_b_plan
   dual_handover_ik_test
+  dual_handover_static_collision_test
+  dual_collision_source_diagnostic
+  dual_handover_linear_approach_test
+  dual_handover_transfer_test
+  dual_arm_a_return_home_test
+  dual_arm_b_inspection_sequence_test
+  dual_arm_b_time_optimization_test
+  dual_arm_b_joint_motion_optimization_test
+  dual_complete_six_face_task_test
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(PROGRAMS
   scripts/step15_sim_playback.py
+  scripts/dual_5t_rviz_preview.py
+  scripts/dual_complete_six_face_rviz_preview.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
