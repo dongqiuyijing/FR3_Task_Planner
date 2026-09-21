@@ -1,0 +1,46 @@
+# DUAL-8-HOME authoritative Home definition.
+# Other dual-arm modules should read this file instead of inventing zeros.
+# Arm A Home is the existing STEP15/DUAL-7 value in rad and must not change.
+# Arm B Home is specified by the user in degree and converted here to rad.
+# Do not send home_b_deg to FollowJointTrajectory.
+
+task_version: DUAL-8-HOME
+authority: true
+home_a_source: STEP15 / DUAL-7
+home_b_source: user specified degree 2026-09-21
+
+joint_names_a: [arm_a_j1, arm_a_j2, arm_a_j3, arm_a_j4, arm_a_j5, arm_a_j6]
+joint_names_b: [arm_b_j1, arm_b_j2, arm_b_j3, arm_b_j4, arm_b_j5, arm_b_j6]
+
+home_a:
+  - -2.271411675804
+  - -1.642863047968
+  - -1.869634009789
+  - -2.871167788011
+  - -0.003375517130
+  - 0.839900045153
+
+home_b_deg: [-95.0, -180.0, 80.0, -166.0, 90.0, -5.0]
+# rad = deg * pi / 180. Do not treat these as degree.
+home_b:
+  - -1.6580627893946132
+  - -3.141592653589793
+  - 1.3962634015954636
+  - -2.897246558310587
+  - 1.5707963267948966
+  - -0.08726646259971647
+
+# Existing DUAL-5-T / DUAL-7 pre-handover. Unchanged.
+pre_b: [-1.662442, -3.198354, 1.401150, -2.915181, 1.570793, -0.091642]
+
+# URDF revolute limits from fairino3_dual_moveit_config/urdf/fr3_arm.xacro (read-only).
+# j1 [-3.0543, 3.0543] j2 [-4.6251, 1.4835] j3 [-2.8274, 2.8274]
+# j4 [-4.6251, 1.4835] j5 [-3.0543, 3.0543] j6 [-3.0543, 3.0543]
+
+max_validation_joint_step: 0.02
+planning_time_sec: 10.0
+max_planning_attempts: 5
+home_tolerance_rad: 0.02
+preview_yaml: /tmp/dual8_home_preview.yaml
+connection_yaml: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/dual8_b_home_to_pre_handover.yaml
+report_yaml: /tmp/dual8_home_report.yaml

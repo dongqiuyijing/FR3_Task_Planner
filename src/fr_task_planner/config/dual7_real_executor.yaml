@@ -1,0 +1,78 @@
+# DUAL-7 dual-arm real executor defaults. PLAN/DRY-RUN unless gated.
+# Does not change P1/D1, six-face allocation, ACM, or DUAL-7 geometry.
+# Do not load /tmp/dual7_preview.yaml as an executable trajectory.
+
+task_version: DUAL-7-REAL
+step15_trajectory: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step15_optimized_lift_to_a_trajectory.yaml
+segments_file: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/dual7_real_task_segments.yaml
+preview_yaml_forbidden: /tmp/dual7_preview.yaml
+# Dual-8 Home authority. Do not invent a second Arm B Home here.
+home_yaml: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/dual8_home.yaml
+b_home_to_pre_file: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/dual8_b_home_to_pre_handover.yaml
+continue_after_home: false
+simultaneous_home: false
+# task_mode home_only | full_task. full_task implies continue_after_home and plan_current_to_home.
+# B grasp confirm is a runtime service /dual7_real_task_executor/confirm_b_grasp, not a launch flag.
+
+trajectory_speed_scale: 0.05
+conservative_joint_vmax_rad_s: 0.20
+home_tolerance_rad: 0.02
+segment_start_tolerance_rad: 0.02
+segment_end_tolerance_rad: 0.02
+joint_settle_timeout_sec: 10.0
+joint_settle_poll_period_sec: 0.10
+joint_settle_required_samples: 3
+startup_ready_timeout_sec: 15.0
+timeout_factor: 1.5
+timeout_margin_sec: 10.0
+
+arm_a:
+  controller_name: arm_a_controller
+  trajectory_action_name: /arm_a_controller/follow_joint_trajectory
+  controller_joint_names: [arm_a_j1, arm_a_j2, arm_a_j3, arm_a_j4, arm_a_j5, arm_a_j6]
+  gripper_service_name: /arm_a/fairino_gripper/command
+  planning_group: arm_a
+  attach_link: arm_a_gripper_tcp
+
+arm_b:
+  controller_name: arm_b_controller
+  trajectory_action_name: /arm_b_controller/follow_joint_trajectory
+  controller_joint_names: [arm_b_j1, arm_b_j2, arm_b_j3, arm_b_j4, arm_b_j5, arm_b_j6]
+  gripper_service_name: /arm_b/fairino_gripper/command
+  planning_group: arm_b
+  attach_link: arm_b_gripper_tcp
+
+gripper_id: 1
+gripper_open_position: 0
+gripper_close_position: 85
+gripper_velocity: 20
+gripper_force: 20
+# Hardware GetGripperMotionDone deadline inside fairino_hardware_dual.
+gripper_max_time_ms: 5000
+gripper_block: 1
+gripper_type: 0
+# Must exceed hardware wait: max(max_time_ms,1000)+kServoRestartMargin(4000) = 9000 ms.
+# This is not a way to hide GetGripperMotionDone timeout; it only lets the
+# executor receive the bridge response instead of racing it.
+gripper_timeout_sec: 15.0
+# Documented copy of fairino_hardware_dual kServoRestartMargin. Not a hardware knob.
+hardware_servo_restart_margin_ms: 4000
+gripper_post_close_wait_sec: 0.5
+# Reset is never sent by this executor. Activate is an explicit stage.
+
+object_name: small_part
+table_name: table
+touch_links_a:
+  - arm_a_finger_l
+  - arm_a_finger_r
+touch_links_b:
+  - arm_b_finger_l
+  - arm_b_finger_r
+
+# home_a / home_b are copied from dual8_home.yaml. dual8_home.yaml is the authority.
+home_a: [-2.271411675804, -1.642863047968, -1.869634009789, -2.871167788011, -0.003375517130, 0.839900045153]
+home_b_deg: [-95.0, -180.0, 80.0, -166.0, 90.0, -5.0]
+home_b: [-1.6580627893946132, -3.141592653589793, 1.3962634015954636, -2.897246558310587, 1.5707963267948966, -0.08726646259971647]
+handover_a: [0.091647, 0.755576, -1.755859, -0.570517, -1.570793, -3.049949]
+handover_b: [-1.662443, -3.872529, 1.754164, -2.594020, 1.570793, -0.091643]
+pre_b: [-1.662442, -3.198354, 1.401150, -2.915181, 1.570793, -0.091642]

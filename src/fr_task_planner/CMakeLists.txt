@@ -25,6 +25,7 @@ find_package(yaml-cpp REQUIRED)
 find_package(control_msgs REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(fairino_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 
 # DUAL-1: read-only dual-arm model test
 add_executable(
@@ -630,6 +631,48 @@ ament_target_dependencies(
   moveit_ros_planning_interface
 )
 
+# DUAL-8-HOME: live Current→Home planner. PLAN ONLY.
+add_executable(
+  dual8_current_to_home_test
+  src/dual8_current_to_home_test.cpp
+)
+target_link_libraries(
+  dual8_current_to_home_test
+  yaml-cpp
+)
+ament_target_dependencies(
+  dual8_current_to_home_test
+  rclcpp
+  sensor_msgs
+  trajectory_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+
+# DUAL-7: dual-arm real executor. Reuses STEP13 frozen-executor helpers.
+# Default DRY RUN. Does not rewrite fr3_real_frozen_trajectory_executor.
+add_executable(dual7_real_task_executor
+  src/dual7_real_task_executor.cpp
+)
+target_include_directories(dual7_real_task_executor PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(dual7_real_task_executor
+  fr_task_planner_trajectory
+  yaml-cpp
+)
+ament_target_dependencies(dual7_real_task_executor
+  rclcpp
+  rclcpp_action
+  sensor_msgs
+  trajectory_msgs
+  control_msgs
+  moveit_msgs
+  fairino_msgs
+  std_srvs
+)
+
 install(TARGETS
   fr3_mtc_smoke_test
   fr3_mtc_pregrasp_test
@@ -663,6 +706,8 @@ install(TARGETS
   dual_arm_b_time_optimization_test
   dual_arm_b_joint_motion_optimization_test
   dual_complete_six_face_task_test
+  dual7_real_task_executor
+  dual8_current_to_home_test
   DESTINATION lib/${PROJECT_NAME}
 )
 

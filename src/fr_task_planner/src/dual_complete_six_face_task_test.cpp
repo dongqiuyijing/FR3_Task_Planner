@@ -2,6 +2,7 @@
 // PLAN ONLY. Local PlanningScene. No execute, no gripper command, no scene apply.
 #include <algorithm>
 #include <cmath>
+#include <exception>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -518,14 +519,32 @@ int main(int argc, char** argv)
     const double chain_tol = y["chain_joint_continuity_tol_rad"].as<double>(1e-4);
     const int attempts = y["max_planning_attempts"].as<int>(5);
     const double ptime = y["planning_time_sec"].as<double>(10.0);
-    std::vector<double> home_a, han_a, han_b, pre_b, i1, i2, i3;
+    std::vector<double> home_a, home_b, han_a, han_b, pre_b, i1, i2, i3;
     yamlVec(y["home_a"], home_a);
+    yamlVec(y["home_b"], home_b);
     yamlVec(y["handover_a"], han_a);
     yamlVec(y["handover_b"], han_b);
     yamlVec(y["pre_b"], pre_b);
     yamlVec(y["i1_b"], i1);
     yamlVec(y["i2_b"], i2);
     yamlVec(y["i3_b"], i3);
+    if (y["home_yaml"] && y["home_yaml"].IsScalar())
+    {
+      try
+      {
+        YAML::Node hy = YAML::LoadFile(y["home_yaml"].as<std::string>());
+        yamlVec(hy["home_a"], home_a);
+        yamlVec(hy["home_b"], home_b);
+        yamlVec(hy["pre_b"], pre_b);
+        emit("loaded Dual-8 Home authority " + y["home_yaml"].as<std::string>());
+      }
+      catch (const std::exception& e)
+      {
+        emit(std::string("WARN: dual8_home.yaml not loaded: ") + e.what());
+      }
+    }
+    emit("Arm A Home rad " + fmt(home_a));
+    emit("Arm B Home rad " + fmt(home_b));
     const double q_a_open = y["q_a_open"].as<double>(0.0);
     const double q_a_grasp = y["q_a_grasp"].as<double>(0.083);
     const double q_b_open = y["q_b_open"].as<double>(0.0);
@@ -705,7 +724,7 @@ int main(int argc, char** argv)
     p0.name = "Phase 0 MODEL START";
     p0.moving = "(none)";
     p0.face = "(none)";
-    p0.source = "STEP15 Home (live mock zeros is not a valid task start)";
+    p0.source = "DUAL-8 A Home + B Home (live mock zeros is not a valid task start)";
     p0.owner = "world";
     p0.q_a = q_a_open;
     p0.q_b = q_b_open;
@@ -716,50 +735,88 @@ int main(int argc, char** argv)
       auto live_st = fkState(live_a, live_b, q_a_open, q_b_open);
       const bool live_col = colliding(*scene, live_st, live_pair);
       std::string home_pair;
-      auto home_st = fkState(home_a, b_now, q_a_open, q_b_open);
+      const std::vector<double> model_b = (home_b.size() == 6) ? home_b : b_now;
+      auto home_st = fkState(home_a, model_b, q_a_open, q_b_open);
       const bool home_col = colliding(*scene, home_st, home_pair);
-      if (live_col)
+      const bool live_zero = maxAbs(live_a, std::vector<double>(6, 0.0)) < 1e-3 &&
+                             maxAbs(live_b, std::vector<double>(6, 0.0)) < 1e-3;
+      if (live_col || live_zero)
       {
-        emit("Live mock zeros colliding: " + live_pair);
-        emit("Current->Home from live zeros: NOT VALIDATED (start state in collision)");
+        emit(live_col ? ("Live start colliding: " + live_pair)
+                      : "Live joints look like mock zeros");
+        emit("Current->Home from colliding/zero live: NOT VALIDATED");
         if (home_col)
         {
-          emit("PHASE CONNECTION FAIL: STEP15 Home + live B also colliding " + home_pair);
+          emit("PHASE CONNECTION FAIL: A Home + B Home colliding " + home_pair);
           emit("DUAL-7 INCOMPLETE");
           stop();
           return 3;
         }
         a_now = home_a;
+        b_now = model_b;
         p0.end_a = a_now;
         p0.end_b = b_now;
         p0.wps = {a_now};
         p0.collision_ok = true;
         p0.connected = true;
-        p0.note = "POST-GRASP/STEP15 MODEL START at Home; live zeros omitted (table collision)";
+        p0.note = "DUAL-8 MODEL START at A Home + B Home; live zeros/collision omitted";
         add_phase(p0);
       }
-      else if (maxAbs(a_now, home_a) > 1e-3)
+      else if (maxAbs(a_now, home_a) > 1e-3 ||
+               (home_b.size() == 6 && maxAbs(b_now, home_b) > 1e-3))
       {
-        p0.name = "Phase 0 Current_to_Home";
-        p0.moving = "arm_a";
-        p0.source = "replan from live joints";
-        if (!run_plan(p0, true, home_a))
+        if (maxAbs(a_now, home_a) > 1e-3)
         {
-          emit("PHASE CONNECTION FAIL: Current -> Home");
-          emit("DUAL-7 INCOMPLETE");
-          stop();
-          return 3;
+          p0.name = "Phase 0 Current A to Home";
+          p0.moving = "arm_a";
+          p0.source = "replan from live joints";
+          if (!run_plan(p0, true, home_a))
+          {
+            emit("PHASE CONNECTION FAIL: Current A -> Home");
+            emit("DUAL-7 INCOMPLETE");
+            stop();
+            return 3;
+          }
+        }
+        else
+        {
+          p0.wps = {a_now};
+          p0.end_a = a_now;
+          p0.end_b = b_now;
+          p0.collision_ok = true;
+          p0.connected = true;
+          add_phase(p0);
+        }
+        if (home_b.size() == 6 && maxAbs(b_now, home_b) > 1e-3)
+        {
+          Phase p0b;
+          p0b.name = "Phase 0 Current B to Home";
+          p0b.moving = "arm_b";
+          p0b.face = "(home)";
+          p0b.source = "replan from live joints with A at Home";
+          p0b.owner = "world";
+          p0b.q_a = q_a_open;
+          p0b.q_b = q_b_open;
+          if (!run_plan(p0b, false, home_b))
+          {
+            emit("PHASE CONNECTION FAIL: Current B -> Home");
+            emit("DUAL-7 INCOMPLETE");
+            stop();
+            return 3;
+          }
         }
       }
       else
       {
         p0.wps = {a_now};
         a_now = home_a;
+        if (home_b.size() == 6)
+          b_now = home_b;
         p0.end_a = a_now;
         p0.end_b = b_now;
         p0.collision_ok = true;
         p0.connected = true;
-        p0.note = "already at Home";
+        p0.note = "already at Dual-8 Homes";
         add_phase(p0);
       }
     }
@@ -847,7 +904,7 @@ int main(int argc, char** argv)
     p5.name = "Phase 5 B to pre-handover";
     p5.moving = "arm_b";
     p5.face = "(handover prep)";
-    p5.source = "plan() current B -> DUAL-5-T matching pre_b";
+    p5.source = "plan() Dual-8 B Home -> DUAL-5-T matching pre_b";
     p5.owner = owner;
     if (!run_plan(p5, false, pre_b))
     {

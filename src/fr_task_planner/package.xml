@@ -27,6 +27,7 @@
   <depend>control_msgs</depend>
   <depend>rclcpp_action</depend>
   <depend>fairino_msgs</depend>
+  <depend>std_srvs</depend>
   <build_depend>yaml-cpp</build_depend>
 
   <exec_depend>fairino3_v6_moveit2_config</exec_depend>
