@@ -54,6 +54,13 @@ def _setup(context, *args, **kwargs):
         .perform(context)
         .lower()
         == "true",
+        "auto_handover_release": LaunchConfiguration("auto_handover_release")
+        .perform(context)
+        .lower()
+        == "true",
+        "handover_release_delay_sec": float(
+            LaunchConfiguration("handover_release_delay_sec").perform(context)
+        ),
         "segment": LaunchConfiguration("segment").perform(context),
         "resume_from": LaunchConfiguration("resume_from").perform(context),
         "task_mode": LaunchConfiguration("task_mode").perform(context),
@@ -181,6 +188,17 @@ def generate_launch_description():
             DeclareLaunchArgument("simultaneous_home", default_value="false"),
             DeclareLaunchArgument("confirm_handover_approach", default_value="false"),
             DeclareLaunchArgument("handover_b_grasp_confirmed", default_value="false"),
+            DeclareLaunchArgument(
+                "auto_handover_release",
+                default_value="false",
+                description="If true, after gripper_close_b SUCCESS wait then allow Arm A open "
+                "(skip /confirm_b_grasp). Default false keeps operator confirm.",
+            ),
+            DeclareLaunchArgument(
+                "handover_release_delay_sec",
+                default_value="2.0",
+                description="Seconds to wait after B CLOSE SUCCESS before auto Arm A release.",
+            ),
             DeclareLaunchArgument("segment", default_value=""),
             DeclareLaunchArgument("resume_from", default_value=""),
             DeclareLaunchArgument("task_mode", default_value="home_only"),
@@ -189,7 +207,7 @@ def generate_launch_description():
             DeclareLaunchArgument("b_grasp_confirm_timeout_sec", default_value="600.0"),
             DeclareLaunchArgument("max_joint_age_sec", default_value="2.0"),
             DeclareLaunchArgument("real_robot_confirmation", default_value=""),
-            DeclareLaunchArgument("trajectory_speed_scale", default_value="0.05"),
+            DeclareLaunchArgument("trajectory_speed_scale", default_value="0.3"),
             DeclareLaunchArgument("gripper_a_already_activated", default_value="false"),
             DeclareLaunchArgument("gripper_b_already_activated", default_value="false"),
             LogInfo(

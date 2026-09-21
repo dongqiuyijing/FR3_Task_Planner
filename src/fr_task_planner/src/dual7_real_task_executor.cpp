@@ -284,6 +284,10 @@ public:
     RCLCPP_INFO(node_->get_logger(), "resume_from: %s",
                 resume_from_.empty() ? "(none)" : resume_from_.c_str());
     RCLCPP_INFO(node_->get_logger(), "task_mode: %s", task_mode_.c_str());
+    RCLCPP_INFO(node_->get_logger(), "AUTO_HANDOVER_RELEASE: %s",
+                auto_handover_release_ ? "ENABLED" : "DISABLED");
+    RCLCPP_INFO(node_->get_logger(), "HANDOVER_WAIT: %.3f sec (used only after B CLOSE SUCCESS)",
+                handover_release_delay_sec_);
     RCLCPP_INFO(node_->get_logger(), "speed scale: %.6f (STEP13 scaler, NOT RViz playback)",
                 cfg_.trajectory_speed_scale);
     RCLCPP_INFO(node_->get_logger(), "execute confirmation token: %s", kRealRobotConfirmation);
@@ -545,7 +549,7 @@ private:
     cfg_.execute = getBool(node_, "execute", false);
     cfg_.real_robot_confirmation = getString(node_, "real_robot_confirmation", "");
     cfg_.plan_current_to_home = getBool(node_, "plan_current_to_home", false);
-    cfg_.trajectory_speed_scale = getDouble(node_, "trajectory_speed_scale", 0.05);
+    cfg_.trajectory_speed_scale = getDouble(node_, "trajectory_speed_scale", 0.3);
     cfg_.home_tolerance_rad = getDouble(node_, "home_tolerance_rad", 0.02);
     cfg_.segment_start_tolerance_rad = getDouble(node_, "segment_start_tolerance_rad", 0.02);
     cfg_.segment_end_tolerance_rad = getDouble(node_, "segment_end_tolerance_rad", 0.02);
@@ -569,6 +573,10 @@ private:
     plan_home_ = getBool(node_, "plan_current_to_home", false);
     confirm_approach_ = getBool(node_, "confirm_handover_approach", false);
     confirm_grasp_b_ = getBool(node_, "handover_b_grasp_confirmed", false);
+    auto_handover_release_ = getBool(node_, "auto_handover_release", false);
+    handover_release_delay_sec_ = getDouble(node_, "handover_release_delay_sec", 2.0);
+    if (handover_release_delay_sec_ < 0.0)
+      handover_release_delay_sec_ = 0.0;
     already_act_a_ = getBool(node_, "gripper_a_already_activated", false);
     already_act_b_ = getBool(node_, "gripper_b_already_activated", false);
     hw_margin_ms_ = getInt(node_, "hardware_servo_restart_margin_ms", 4000);
@@ -999,10 +1007,21 @@ private:
                   owner_logic_.c_str());
       if (!motion)
       {
-        RCLCPP_INFO(node_->get_logger(),
-                    "dry-run: would pause for operator confirm via "
-                    "ros2 service call /dual7_real_task_executor/confirm_b_grasp "
-                    "std_srvs/srv/SetBool \"{data: true}\"; not auto-confirming");
+        if (auto_handover_release_)
+        {
+          RCLCPP_INFO(node_->get_logger(), "AUTO_HANDOVER_RELEASE: ENABLED");
+          RCLCPP_INFO(node_->get_logger(), "AUTO HANDOVER MODE");
+          RCLCPP_INFO(node_->get_logger(),
+                      "dry-run: gripper_close_b SENT=NO; skip HANDOVER_WAIT; "
+                      "ARM_A_RELEASE_ALLOWED is NOT claimed (no real B CLOSE SUCCESS)");
+        }
+        else
+        {
+          RCLCPP_INFO(node_->get_logger(),
+                      "dry-run: would pause for operator confirm via "
+                      "ros2 service call /dual7_real_task_executor/confirm_b_grasp "
+                      "std_srvs/srv/SetBool \"{data: true}\"; not auto-confirming");
+        }
         if (inject_failure_ == "B_GRASP_UNCONFIRMED" || inject_failure_ == "USER_CANCEL")
         {
           RCLCPP_ERROR(node_->get_logger(), "inject_failure=%s: A will NOT open",
@@ -1016,6 +1035,12 @@ private:
         RCLCPP_ERROR(node_->get_logger(), "inject_failure=%s: A will NOT open",
                      inject_failure_.c_str());
         return false;
+      }
+      if (auto_handover_release_)
+      {
+        if (!waitAutoHandoverRelease())
+          return false;
+        return true;
       }
       if (!waitBGraspConfirm())
         return false;
@@ -1580,6 +1605,18 @@ private:
     if (!callGripper(arm_b, fields, close ? "REAL_GRIPPER_CLOSE_FAILED" : "REAL_GRIPPER_OPEN_FAILED",
                      "move"))
       return false;
+    if (close && arm_b)
+    {
+      if (servoj_block_b_)
+      {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "gripper_close_b returned but ServoJ unrestored; STOP. "
+                     "B_GRIPPER_CLOSE_SUCCESS not claimed. A will NOT open.");
+        return false;
+      }
+      b_close_success_ = true;
+      RCLCPP_INFO(node_->get_logger(), "B_GRIPPER_CLOSE_SUCCESS");
+    }
     if (close && !arm_b)
       owner_logic_ = "A";
     if (!close && !arm_b && physical_b_grasp_)
@@ -1865,6 +1902,43 @@ private:
     return ok;
   }
 
+  bool waitAutoHandoverRelease()
+  {
+    RCLCPP_INFO(node_->get_logger(), "AUTO_HANDOVER_RELEASE: ENABLED");
+    if (!b_close_success_ || servoj_block_b_)
+    {
+      RCLCPP_ERROR(node_->get_logger(),
+                   "STOP: auto handover requires B CLOSE SUCCESS and ServoJ restored. "
+                   "gripper_close_b success=%s servoj_block_b=%s. ARM A will NOT open.",
+                   b_close_success_ ? "YES" : "NO", servoj_block_b_ ? "YES" : "NO");
+      return false;
+    }
+    RCLCPP_INFO(node_->get_logger(), "AUTO HANDOVER MODE");
+    RCLCPP_INFO(node_->get_logger(), "Waiting %.3f sec before Arm A release",
+                handover_release_delay_sec_);
+    RCLCPP_INFO(node_->get_logger(), "HANDOVER_WAIT: %.3f sec", handover_release_delay_sec_);
+    const auto t0 = std::chrono::steady_clock::now();
+    while (rclcpp::ok())
+    {
+      rclcpp::spin_some(node_);
+      const double elapsed =
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+      if (elapsed >= handover_release_delay_sec_)
+        break;
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    if (!rclcpp::ok())
+    {
+      RCLCPP_ERROR(node_->get_logger(),
+                   "HANDOVER_WAIT cancelled; ARM_A_RELEASE_ALLOWED not claimed");
+      return false;
+    }
+    RCLCPP_INFO(node_->get_logger(), "HANDOVER_WAIT_COMPLETE");
+    physical_b_grasp_ = true;
+    RCLCPP_INFO(node_->get_logger(), "ARM_A_RELEASE_ALLOWED");
+    return true;
+  }
+
   bool waitBGraspConfirm()
   {
     if (confirm_grasp_b_)
@@ -1937,6 +2011,9 @@ private:
   bool plan_home_ = false;
   bool confirm_approach_ = false;
   bool confirm_grasp_b_ = false;
+  bool auto_handover_release_ = false;
+  bool b_close_success_ = false;
+  double handover_release_delay_sec_ = 2.0;
   bool already_act_a_ = false;
   bool already_act_b_ = false;
   bool activated_a_ = false;

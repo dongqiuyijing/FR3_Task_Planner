@@ -13,8 +13,11 @@ continue_after_home: false
 simultaneous_home: false
 # task_mode home_only | full_task. full_task implies continue_after_home and plan_current_to_home.
 # B grasp confirm is a runtime service /dual7_real_task_executor/confirm_b_grasp, not a launch flag.
+# Temporary auto A-release after B close SUCCESS. Default false = keep operator confirm_b_grasp.
+auto_handover_release: false
+handover_release_delay_sec: 2.0
 
-trajectory_speed_scale: 0.05
+trajectory_speed_scale: 0.3
 conservative_joint_vmax_rad_s: 0.20
 home_tolerance_rad: 0.02
 segment_start_tolerance_rad: 0.02
