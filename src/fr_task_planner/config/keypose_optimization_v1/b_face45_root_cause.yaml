@@ -1,0 +1,784 @@
+task_version: KEYPOSE_B_FACE45_DIAG
+execution: false
+note: |
+  Independent B_FACE4/5 diagnosis. Did not rewrite candidates, ACM, or collision geometry.
+symmetry_plane: world_YZ  # x -> -x
+canonical_roll0_source: |
+  dual_arm_b_inspection_sequence.yaml roll_deg=0 is preferred-roll object pose from
+  compute_view_target(normal->D1, up_in_object->inspection_up=up_world).
+  It is NOT 'B TCP joint-6 / TCP roll = 0'. FACE4/5 face_up matches up_world in the YZ plane.
+  A_FACE1 extra-roll from that preferred up is about -90 deg (face_up = +X).
+  Correct B_FACE4 mirror extra-roll is about 90 deg (face_up = -X), not DUAL-7 -150.
+p1: [0.000000000000, 0.300000000000, 1.200000000000]
+d1: [0.000000000000, -0.707106666000, 0.707106897000]
+up_world_preferred: [0.000000000000, 0.707106781000, 0.707106781000]
+T_tcpA_object:
+  xyz: [0.000000000000, 0.000000000000, 0.000000000000]
+  xyzw: [1.000000000000, 0.000000000000, 0.000000000000, 0.000000000000]
+  rpy_zyx_deg: [180.000000000000, -0.000000000000, 0.000000000000]
+T_tcpB_object:
+  xyz: [0.000000000000, 0.000000000000, 0.008000000000]
+  xyzw: [0.000000000000, 0.000000000000, -0.707107218813, 0.707106343559]
+  rpy_zyx_deg: [180.000000000000, 180.000000000000, 89.999929079509]
+A_FACE1:
+  physical_id: "+Y"
+  face_center: [0.000000000000, 0.300000000003, 1.199999999721]
+  face_normal: [0.000000000000, -0.707106666217, 0.707106896156]
+  face_up: [1.000000000000, 0.000000000000, 0.000000000000]
+  extra_roll_from_preferred_deg: -90.000000000000
+  tcp:
+    xyz: [0.000000000000, 0.305303300000, 1.194696698000]
+    xyzw: [-0.270598103182, -0.653281460440, 0.270598103182, 0.653281460440]
+    rpy_zyx_deg: [-90.000000000000, -44.999990684227, 90.000000000000]
+A_FACE2:
+  physical_id: "-Y"
+  face_center: [0.000000000001, 0.300000000008, 1.199999999726]
+  face_normal: [0.000000000127, -0.707106665636, 0.707106896738]
+  face_up: [0.766044443465, -0.454519551586, -0.454519403174]
+  extra_roll_from_preferred_deg: -129.999999969146
+  tcp:
+    xyz: [0.000000000000, 0.305303300000, 1.194696698000]
+    xyzw: [-0.390448349077, 0.346829043069, 0.837319186166, -0.161729039032]
+    rpy_zyx_deg: [-122.732398679321, 147.202254689660, 40.120744856147]
+B_FACE4_canonical:
+  physical_id: "+X"
+  roll_deg: 0.0
+  face_center: [0.000000000000, 0.300000000003, 1.199999999721]
+  face_normal: [0.000000000000, -0.707106666217, 0.707106896156]
+  face_up: [0.000000000000, 0.707106896156, 0.707106666217]
+  tcp:
+    xyz: [0.000000000000, 0.299646444831, 1.189039844670]
+    xyzw: [-0.382683507472, 0.000000236842, 0.000000571787, 0.923879501401]
+    rpy_zyx_deg: [-45.000009315751, 0.000050148368, 0.000050148352]
+  object:
+    xyz: [0.000000000000, 0.305303300000, 1.194696698000]
+    xyzw: [-0.270598103182, -0.270598103182, -0.653281460440, 0.653281460440]
+    rpy_zyx_deg: [-180.000000000000, -134.999990684227, 90.000000000000]
+B_FACE5_canonical:
+  physical_id: "-X"
+  roll_deg: 0.0
+  face_center: [0.000000000000, 0.300000000003, 1.199999999721]
+  face_normal: [0.000000000000, -0.707106666217, 0.707106896156]
+  face_up: [0.000000000000, 0.707106896156, 0.707106666217]
+  tcp:
+    xyz: [0.000000000000, 0.299646444831, 1.189039844670]
+    xyzw: [0.000000236842, 0.382683507472, 0.923879501401, -0.000000571787]
+    rpy_zyx_deg: [-134.999990684249, -179.999949851632, 0.000050148352]
+B_FACE4_correct_yz_mirror_of_A_FACE1:
+  method: |
+    Mirror A face center/normal/up through world YZ, then reconstruct B object with
+    B +X face axes and T_tcpB = T_obj * T_tcpB_obj^{-1}. Not joint copy, not M*R*M.
+  face_center: [-0.000000000000, 0.300000000003, 1.199999999721]
+  face_normal: [-0.000000000000, -0.707106666217, 0.707106896156]
+  face_up: [-1.000000000000, 0.000000000000, 0.000000000000]
+  extra_roll_from_canonical_deg: 90.000000000000
+  tcp:
+    xyz: [0.008000000000, 0.305303300000, 1.194696698000]
+    xyzw: [-0.270598507496, -0.653281292967, 0.270598507496, 0.653281292967]
+    rpy_zyx_deg: [-90.000000000000, -44.999919763736, 90.000000000000]
+  object:
+    xyz: [-0.000000000000, 0.305303300000, 1.194696698000]
+    xyzw: [0.270597996964, -0.653281504437, -0.270597996964, 0.653281504437]
+    rpy_zyx_deg: [-90.000000000000, -134.999990684227, 90.000000000000]
+B_FACE5_correct_yz_mirror_of_A_FACE2:
+  face_center: [-0.000000000001, 0.300000000008, 1.199999999726]
+  face_normal: [-0.000000000127, -0.707106665636, 0.707106896738]
+  face_up: [-0.766044443465, -0.454519551586, -0.454519403174]
+  extra_roll_from_canonical_deg: 129.999999969146
+  tcp:
+    xyz: [0.006128355548, 0.308939456413, 1.198332853225]
+    xyzw: [0.837319086072, -0.161729557247, -0.390448134425, 0.346829284716]
+    rpy_zyx_deg: [-57.267626032010, 147.202314348352, 139.879209523611]
+DUAL7_I1:
+  recorded_roll_deg: -150.000000000000
+  measured_extra_roll_from_canonical_deg: -150.000006300412
+  joints: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, 1.040410000000]
+  tcp:
+    xyz: [-0.003999978304, 0.310202281465, 1.199595720100]
+    xyzw: [-0.099045757900, 0.892399206867, -0.369643591809, 0.239117562005]
+    rpy_zyx_deg: [49.106574859220, 159.295189229497, 22.207645651516]
+  face_center: [0.000000030194, 0.300000004366, 1.200000039301]
+  face_normal: [0.000001234583, -0.707106668126, 0.707106894246]
+  face_up: [0.499999904769, -0.612372135996, -0.612372813151]
+DUAL7_I2:
+  recorded_roll_deg: -150.000000000000
+  measured_extra_roll_from_canonical_deg: -150.000006300412
+  joints: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, -2.101183000000]
+  tcp:
+    xyz: [-0.003999978304, 0.310202281465, 1.199595720100]
+    xyzw: [0.892399189712, 0.099045912468, 0.239117497980, 0.369643633225]
+    rpy_zyx_deg: [130.893420229712, -20.704795766951, 22.207659542119]
+  face_center: [0.000000032444, 0.300000005284, 1.200000040220]
+  face_normal: [0.000001534583, -0.707106545651, 0.707107016720]
+  face_up: [0.499999904769, -0.612372135996, -0.612372813151]
+tcp_errors:
+  FACE4:
+    canonical_vs_mirror_pos_m: 0.011313708499
+    canonical_vs_mirror_ori_deg: 90.000000000000
+    dual7_vs_canonical_pos_m: 0.015454838063
+    dual7_vs_canonical_ori_deg: 150.000006300399
+    dual7_vs_mirror_pos_m: 0.013856403437
+    dual7_vs_mirror_ori_deg: 119.999993699619
+    objectFromFace_vs_rolledAboutD1_pos_m: 0.000000000271
+    objectFromFace_vs_rolledAboutD1_ori_deg: 0.000000000000
+  FACE5:
+    canonical_vs_mirror_pos_m: 0.014500924591
+    canonical_vs_mirror_ori_deg: 129.999999969146
+    dual7_vs_canonical_pos_m: 0.015454838063
+    dual7_vs_canonical_ori_deg: 150.000006300396
+    dual7_vs_mirror_pos_m: 0.010284585867
+    dual7_vs_mirror_ori_deg: 79.999993730507
+ik_coverage_canonical_FACE4:
+  attempts: 84
+  ik_success: 84
+  unique_fk_limit_ok: 8
+  unique_collision_free: 0
+  distinct_config_groups: 8
+  groups:
+    - {sig: "j1_-60|folded_down|elbow-|j4-|wrist-", count: 1}
+    - {sig: "j1_-60|folded|elbow-|j4-|wrist+", count: 1}
+    - {sig: "j1_-60|open_pos|elbow+|j4+|wrist-", count: 1}
+    - {sig: "j1_-60|open_pos|elbow+|j4-|wrist+", count: 1}
+    - {sig: "j1_30|folded_down|elbow-|j4+|wrist+", count: 1}
+    - {sig: "j1_30|folded_down|elbow-|j4-|wrist-", count: 1}
+    - {sig: "j1_30|mid_neg|elbow+|j4-|wrist+", count: 1}
+    - {sig: "j1_30|open_pos|elbow+|j4+|wrist-", count: 1}
+  unique_samples:
+    - seed: "mirror0_t0_exact"
+      joint_values: [-0.994338914200, -3.668206417443, -1.620295392502, -4.136282893248, -0.576457249987, 0.785405055264]
+      sig: "j1_-60|folded_down|elbow-|j4-|wrist-"
+      collision_ok: false
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [0.663759585424, -0.124829908862, 2.462303768681, -2.337463524930, 2.234555750401, -2.356181172960]
+      sig: "j1_30|mid_neg|elbow+|j4-|wrist+"
+      collision_ok: false
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [-0.994347895287, 1.155949514251, 1.620294107151, 0.365348588974, -0.576447644286, 0.785397505022]
+      sig: "j1_-60|open_pos|elbow+|j4+|wrist-"
+      collision_ok: false
+      collision_pair: "arm_a_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t2_exact"
+      joint_values: [-0.994338938467, 1.232722188883, 2.462299341761, -3.695026174369, 0.576457214392, -2.356185327976]
+      sig: "j1_-60|open_pos|elbow+|j4-|wrist+"
+      collision_ok: false
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror1_t0_exact"
+      joint_values: [0.663770932551, -4.297525499687, -1.620312125270, -3.506945071282, -2.234567097134, 0.785396411689]
+      sig: "j1_30|folded_down|elbow-|j4-|wrist-"
+      collision_ok: false
+      collision_pair: "arm_a_base_link <-> arm_b_forearm_link"
+    - seed: "mirror1_t1_nearby"
+      joint_values: [0.663747619456, 0.526611519509, 1.620293487377, 0.994683036060, -2.234543807070, 0.785396598692]
+      sig: "j1_30|open_pos|elbow+|j4+|wrist-"
+      collision_ok: false
+      collision_pair: "arm_b_finger_l <-> arm_b_forearm_link"
+    - seed: "mirror1_t2_nearby"
+      joint_values: [-0.994340763807, -3.016766197663, -2.462300472469, -0.804121710080, 0.576455146723, -2.356187225154]
+      sig: "j1_-60|folded|elbow-|j4-|wrist+"
+      collision_ok: false
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "han_nearby"
+      joint_values: [0.663747893335, -4.374317496707, -2.462297793118, 0.553440486969, 2.234544115285, -2.356180855088]
+      sig: "j1_30|folded_down|elbow-|j4+|wrist+"
+      collision_ok: false
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+ik_coverage_canonical_FACE5:
+  attempts: 84
+  ik_success: 84
+  unique_fk_limit_ok: 6
+  unique_collision_free: 0
+  distinct_config_groups: 6
+  groups:
+    - {sig: "j1_-60|folded_down|elbow-|j4-|wrist-", count: 1}
+    - {sig: "j1_-60|folded|elbow-|j4-|wrist+", count: 1}
+    - {sig: "j1_-60|open_pos|elbow+|j4-|wrist+", count: 1}
+    - {sig: "j1_30|folded_down|elbow-|j4+|wrist+", count: 1}
+    - {sig: "j1_30|mid_neg|elbow+|j4-|wrist+", count: 1}
+    - {sig: "j1_30|open_pos|elbow+|j4+|wrist-", count: 1}
+targeted_seed_tests:
+  - label: "FACE4_canonical"
+    seed: "dual7_i1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [0.663747677407, -0.124826381769, 2.462297770718, -2.337460981600, 2.234543841668, -2.356181055786]
+    sig: "j1_30|mid_neg|elbow+|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "dual7_i1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "dual7_i1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, 1.040410000000]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE4_canonical"
+    seed: "dual7_i2"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_a_base_link <-> arm_b_forearm_link"
+    joint_values: [-0.994339279864, 1.155946693299, 1.620294444146, 0.365347178128, -0.576456189164, 0.785402083567]
+    sig: "j1_-60|open_pos|elbow+|j4+|wrist-"
+  - label: "FACE4_mirror"
+    seed: "dual7_i2"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "dual7_i2"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, 1.040409653590]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE4_canonical"
+    seed: "face6"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994338975298, -3.016768541278, -2.462299338796, -0.804121991802, 0.576457188837, -2.356185419844]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "face6"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "face6"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007642330, -3.632168720341, 0.949850440823, -3.023708917992, 1.982706456302, 1.040409608955]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE4_canonical"
+    seed: "mirror0_t0"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994335557942, -3.016773263690, -2.462302828712, -0.804109957773, 0.576460247198, -2.356189892373]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "mirror0_t0"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "mirror0_t0"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007005850, -2.761368819276, -0.949832065785, -1.994826141528, 1.982707000443, 1.040409978909]
+    sig: "j1_-150|folded|elbow-|j4-|wrist+"
+  - label: "FACE4_canonical"
+    seed: "mirror0_t1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    joint_values: [-0.994338700291, 1.232722119038, 2.462299472067, -3.695026151222, 0.576457463926, -2.356185425304]
+    sig: "j1_-60|open_pos|elbow+|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "mirror0_t1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "mirror0_t1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575255811, -0.369762835503, 0.912427057119, -1.068086117537, -1.491515282385, 0.831275489901]
+    sig: "j1_0|mid_neg|elbow+|j4-|wrist-"
+  - label: "FACE4_canonical"
+    seed: "mirror0_t2"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994338937347, -3.016768597309, -2.462299333151, -0.804121936568, 0.576457226828, -2.356185425649]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "mirror0_t2"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "mirror0_t2"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661006912071, -3.632162235718, 0.949834326585, -3.023699067038, 1.982707069335, 1.040410059633]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE4_canonical"
+    seed: "mirror1_t0"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [0.663747662731, -0.124826410628, 2.462297763478, -2.337460943072, 2.234543826962, -2.356181052031]
+    sig: "j1_30|mid_neg|elbow+|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "mirror1_t0"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "mirror1_t0"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007017752, -3.632159645119, 0.949829281578, -3.023696641421, 1.982706985175, 1.040409989076]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE4_canonical"
+    seed: "mirror1_t1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994338911385, -3.668206416931, -1.620295390196, -4.136282893034, -0.576457252011, 0.785405051202]
+    sig: "j1_-60|folded_down|elbow-|j4-|wrist-"
+  - label: "FACE4_mirror"
+    seed: "mirror1_t1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "mirror1_t1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575819088, 0.467191892815, -0.912349975315, -0.080263844627, -1.491514794133, 0.831275771768]
+    sig: "j1_0|open_pos|elbow-|j4-|wrist-"
+  - label: "FACE4_canonical"
+    seed: "mirror1_t2"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    joint_values: [-0.994336359412, 1.232729052084, 2.462311433987, -3.695035896482, 0.576452542559, -2.356197279360]
+    sig: "j1_-60|open_pos|elbow+|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "mirror1_t2"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "mirror1_t2"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575884598, -0.369722186096, 0.912348833384, -1.068048138211, -1.491514854767, 0.831275966862]
+    sig: "j1_0|mid_neg|elbow+|j4-|wrist-"
+  - label: "FACE4_canonical"
+    seed: "a2_mirror0_t0"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994332909715, -3.016766050357, -2.462301688686, -0.804122043750, 0.576463253825, -2.356185525931]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "a2_mirror0_t0"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "a2_mirror0_t0"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575817824, -0.369722889393, 0.912350059754, -1.068049097408, -1.491514795212, 0.831275771133]
+    sig: "j1_0|mid_neg|elbow+|j4-|wrist-"
+  - label: "FACE4_canonical"
+    seed: "a2_mirror0_t1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994338912757, -3.016768619516, -2.462299332419, -0.804121916749, 0.576457251388, -2.356185423667]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "a2_mirror0_t1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "a2_mirror0_t1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575801157, -0.369723088722, 0.912350490828, -1.068049326924, -1.491514809998, 0.831275763723]
+    sig: "j1_0|mid_neg|elbow+|j4-|wrist-"
+  - label: "FACE4_canonical"
+    seed: "a2_mirror1_t0"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994330954610, -3.668208699607, -1.620309118291, -4.136266923725, -0.576465209486, 0.785405101103]
+    sig: "j1_-60|folded_down|elbow-|j4-|wrist-"
+  - label: "FACE4_mirror"
+    seed: "a2_mirror1_t0"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "a2_mirror1_t0"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575534727, 0.467196419332, -0.912360362672, -0.080257954106, -1.491515044260, 0.831275636434]
+    sig: "j1_0|open_pos|elbow-|j4-|wrist-"
+  - label: "FACE4_canonical"
+    seed: "a2_mirror1_t1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994338943548, -3.016768589523, -2.462299335409, -0.804121942489, 0.576457220666, -2.356185425160]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE4_mirror"
+    seed: "a2_mirror1_t1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE4_dual7tcp"
+    seed: "a2_mirror1_t1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575822861, -0.369723041922, 0.912350437869, -1.068049323832, -1.491514790661, 0.831275773239]
+    sig: "j1_0|mid_neg|elbow+|j4-|wrist-"
+  - label: "FACE5_canonical"
+    seed: "dual7_i1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994338912061, -3.016768621291, -2.462299336012, -0.804121906653, 0.576457251587, 0.785407224732]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "dual7_i1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "dual7_i1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661006743225, -2.761367840998, -0.949833679874, -1.994825442207, 1.982707216510, -2.101182853251]
+    sig: "j1_-150|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_canonical"
+    seed: "dual7_i2"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_finger_r <-> arm_b_forearm_link"
+    joint_values: [0.663747736622, 0.526611481514, 1.620293474581, 0.994683045047, -2.234543902369, -2.356196107363]
+    sig: "j1_30|open_pos|elbow+|j4+|wrist-"
+  - label: "FACE5_mirror"
+    seed: "dual7_i2"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "dual7_i2"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, -2.101183000000]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE5_canonical"
+    seed: "face6"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_finger_r <-> arm_b_forearm_link"
+    joint_values: [0.663747658365, 0.526611498549, 1.620293463565, 0.994683028788, -2.234543822664, -2.356196124373]
+    sig: "j1_30|open_pos|elbow+|j4+|wrist-"
+  - label: "FACE5_mirror"
+    seed: "face6"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "face6"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661006999478, -3.632159007937, 0.949828014928, -3.023696006596, 1.982707000291, -2.101182999627]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE5_canonical"
+    seed: "mirror0_t0"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    joint_values: [-0.994338908294, 1.232722206443, 2.462299337031, -3.695026100334, 0.576457254386, 0.785407226716]
+    sig: "j1_-60|open_pos|elbow+|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "mirror0_t0"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "mirror0_t0"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575828266, 0.467191809315, -0.912349793904, -0.080263943575, -1.491514785980, -2.310317224045]
+    sig: "j1_0|open_pos|elbow-|j4-|wrist-"
+  - label: "FACE5_canonical"
+    seed: "mirror0_t1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    joint_values: [-0.994338911179, 1.232722212563, 2.462299332476, -3.695026108899, 0.576457252038, 0.785407232393]
+    sig: "j1_-60|open_pos|elbow+|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "mirror0_t1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "mirror0_t1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575831742, 0.467192009457, -0.912350245307, -0.080263692391, -1.491514782964, -2.310317222315]
+    sig: "j1_0|open_pos|elbow-|j4-|wrist-"
+  - label: "FACE5_canonical"
+    seed: "mirror0_t2"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994338920384, -3.016768615314, -2.462299335769, -0.804121916992, 0.576457243834, 0.785407229212]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "mirror0_t2"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "mirror0_t2"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661006999019, -3.632159016966, 0.949828037803, -3.023696020681, 1.982707000852, -2.101182999488]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE5_canonical"
+    seed: "mirror1_t0"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994338908002, -3.016768623163, -2.462299335351, -0.804121905872, 0.576457255665, 0.785407224898]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "mirror1_t0"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "mirror1_t0"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007000125, -2.761370584503, -0.949828005390, -1.994828410145, 1.982706999895, -2.101183000077]
+    sig: "j1_-150|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_canonical"
+    seed: "mirror1_t1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    joint_values: [-0.994339479860, 1.232722883664, 2.462299551536, -3.695026997666, 0.576456684356, 0.785407231081]
+    sig: "j1_-60|open_pos|elbow+|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "mirror1_t1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "mirror1_t1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007000280, -3.632159092235, 0.949828210206, -3.023696118041, 1.982706999767, -2.101183000170]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE5_canonical"
+    seed: "mirror1_t2"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [0.663744931754, -0.124825948558, 2.462298766156, -2.337462155396, 2.234541125044, 0.785412006463]
+    sig: "j1_30|mid_neg|elbow+|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "mirror1_t2"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "mirror1_t2"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007304949, -3.632160459804, 0.949832169952, -3.023698997316, 1.982706739111, -2.101183273669]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE5_canonical"
+    seed: "a2_mirror0_t0"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994338913467, -3.016768618137, -2.462299332400, -0.804121917782, 0.576457250728, 0.785407229527]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "a2_mirror0_t0"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "a2_mirror0_t0"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091576128650, 0.467195472376, -0.912357702314, -0.080259679727, -1.491514512769, -2.310317100896]
+    sig: "j1_0|open_pos|elbow-|j4-|wrist-"
+  - label: "FACE5_canonical"
+    seed: "a2_mirror0_t1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994359048975, -3.016762472385, -2.462307041491, -0.804122165168, 0.576437086434, 0.785409381793]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "a2_mirror0_t1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "a2_mirror0_t1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661005942096, -2.761358583600, -0.949859442042, -1.994805639409, 1.982708615795, -2.101181062346]
+    sig: "j1_-150|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_canonical"
+    seed: "a2_mirror1_t0"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994339160403, -3.016768360608, -2.462299372496, -0.804122084438, 0.576457001339, 0.785407168787]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "a2_mirror1_t0"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "a2_mirror1_t0"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [-2.661007026150, -3.632158922176, 0.949827714355, -3.023695963788, 1.982707037056, -2.101183163778]
+    sig: "j1_-150|folded_down|elbow+|j4-|wrist+"
+  - label: "FACE5_canonical"
+    seed: "a2_mirror1_t1"
+    ik_ok: true
+    collision_ok: false
+    collision_pair: "arm_b_forearm_link <-> mounting_column"
+    joint_values: [-0.994340142080, -3.016766050245, -2.462299766144, -0.804124012324, 0.576456021058, 0.785407182132]
+    sig: "j1_-60|folded|elbow-|j4-|wrist+"
+  - label: "FACE5_mirror"
+    seed: "a2_mirror1_t1"
+    ik_ok: false
+    collision_ok: false
+    collision_pair: ""
+  - label: "FACE5_dual7tcp"
+    seed: "a2_mirror1_t1"
+    ik_ok: true
+    collision_ok: true
+    collision_pair: ""
+    joint_values: [0.091575827647, 0.467191776673, -0.912349722392, -0.080263982465, -1.491514786529, -2.310317224357]
+    sig: "j1_0|open_pos|elbow-|j4-|wrist-"
+dual7_static_collision:
+  arm_a_state: dual8_home_a  # Phase7 return Home, not arbitrary initial
+  home_a: [-2.271411675804, -1.642863047968, -1.869634009789, -2.871167788011, -0.003375517130, 0.839900045153]
+  i1_b: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, 1.040410000000]
+  i2_b: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, -2.101183000000]
+  column:
+    xyz: [0.000000000000, 0.000000000000, 0.700000000000]
+    dim: [0.200000000000, 0.200000000000, 1.400000000000]
+    aabb_min: [-0.100000000000, -0.100000000000, 0.000000000000]
+    aabb_max: [0.100000000000, 0.100000000000, 1.400000000000]
+  arm_a_base_link:
+    xyz: [0.100000000000, 0.000000000000, 1.100000000000]
+    xyzw: [0.653281482438, -0.270598050073, 0.653281482438, -0.270598050073]
+    rpy_zyx_deg: [90.000000000000, -135.000000000000, 90.000000000000]
+  arm_a_base_link_shape_count: 1
+  arm_a_base_link_extents: [0.128000, 0.128000, 0.079800]
+  arm_b_base_link:
+    xyz: [-0.100000000000, 0.000000000000, 1.100000000000]
+    xyzw: [0.653281482438, -0.270598050073, -0.653281482438, 0.270598050073]
+    rpy_zyx_deg: [-90.000000000000, 135.000000000000, 90.000000000000]
+  arm_b_base_link_shape_count: 1
+  arm_b_base_link_extents: [0.128000, 0.128000, 0.079800]
+  arm_b_upperarm_link:
+    xyz: [-0.240000000000, 0.000000000000, 1.100000000000]
+    xyzw: [0.078067965292, 0.130206658373, -0.847708077979, 0.508274171525]
+    rpy_zyx_deg: [171.568586891615, 164.649740478528, 60.754388367008]
+  arm_b_upperarm_link_shape_count: 1
+  arm_b_upperarm_link_extents: [0.370000, 0.090000, 0.121184]
+  arm_b_forearm_link:
+    xyz: [-0.108084854761, 0.235593765200, 1.174121334684]
+    xyzw: [0.128966896203, 0.080099443027, -0.521479515219, 0.839649173237]
+    rpy_zyx_deg: [-172.060612343577, 164.394156457933, 117.403471430975]
+  arm_b_forearm_link_shape_count: 1
+  arm_b_forearm_link_extents: [0.325010, 0.090000, 0.107681]
+  arm_a_forearm_link:
+    xyz: [0.519273208914, 0.020088889328, 1.101706255738]
+    xyzw: [0.824624676811, -0.564090584188, -0.023928445079, -0.034976917255]
+    rpy_zyx_deg: [1.764190670348, 175.473264458385, 111.320998875045]
+  arm_a_forearm_link_shape_count: 1
+  arm_a_forearm_link_extents: [0.325010, 0.090000, 0.107681]
+  forearm_origin_to_column_aabb_m: 0.135834583364
+  forearm_origin: [-0.108084854761, 0.235593765200, 1.174121334684]
+  forearm_collision_geometry: mesh STL fairino3_v6/forearm_link.STL (same as visual)
+  i1_with_part:
+  illegal: false
+  first_illegal_pair: ""
+  contacts:
+  i1_without_part:
+  illegal: false
+  first_illegal_pair: ""
+  contacts:
+  i2_with_part:
+  illegal: false
+  first_illegal_pair: ""
+  contacts:
+  i2_without_part:
+  illegal: false
+  first_illegal_pair: ""
+  contacts:
+  face6_with_part:
+  illegal: false
+  first_illegal_pair: ""
+  contacts:
+rviz_preview:
+  DIAG_DUAL7_I1:
+    arm_a: [-2.271411675804, -1.642863047968, -1.869634009789, -2.871167788011, -0.003375517130, 0.839900045153]
+    arm_b: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, 1.040410000000]
+    owner: B
+    note: "DUAL-7 I1 at Home A; collision check in current PlanningScene"
+    illegal: false
+  DIAG_DUAL7_I2:
+    arm_a: [-2.271411675804, -1.642863047968, -1.869634009789, -2.871167788011, -0.003375517130, 0.839900045153]
+    arm_b: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, -2.101183000000]
+    owner: B
+    note: "DUAL-7 I2 at Home A"
+    illegal: false
+  DIAG_FACE6:
+    arm_a: [-2.271411675804, -1.642863047968, -1.869634009789, -2.871167788011, -0.003375517130, 0.839900045153]
+    arm_b: [-1.963019000000, -3.573773000000, 0.345745000000, -3.055156000000, 1.178574000000, 2.356201000000]
+    owner: B
+    note: "legal B_FACE6 for comparison"
+answers_draft:
+  dual7_collides_in_current_model: false
+  unique_ik_config_groups_face4: 8
+  unique_ik_config_groups_face5: 6
+  canonical_roll0_is_tcp_roll0: false
+  canonical_roll0_is_preferred_object_up: true
+  canonical_matches_a_face_mirror: false
+  face4_canonical_vs_mirror_ori_deg: 90.000000000000
+  face5_canonical_vs_mirror_ori_deg: 129.999999969146

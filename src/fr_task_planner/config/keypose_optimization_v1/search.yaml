@@ -1,0 +1,67 @@
+# KEYPOSE OPTIMIZATION V1 — candidate search parameters.
+# Does not overwrite dual7/dual8 baseline YAML.
+
+task_version: KEYPOSE_OPTIMIZATION_V1
+mode: keypose_ik_candidates_only
+execution: false
+path_planning: false
+
+output_dir: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_optimization_v1
+
+# Existing sources (read-only).
+home_yaml: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/dual8_home.yaml
+step15_winner: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step15_optimized_lift_to_a_winner.yaml
+step12c_winner: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/step12c_tilted_camera_winner.yaml
+handover_yaml: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/dual_handover.yaml
+b_inspection_yaml: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/dual_arm_b_inspection_sequence.yaml
+six_face_yaml: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/dual_complete_six_face_task.yaml
+workcell_yaml: /home/cyberbraindualarm/fairino_ws/src/fairino3_dual_moveit_config/config/dual_workcell.yaml
+
+# Weighted joint cost. High J1/J2, low J6. Not Euclidean.
+cost_weights:
+  j1: 8.0
+  j2: 8.0
+  j3: 1.0
+  j4: 1.0
+  j5: 1.0
+  j6: 0.15
+
+# Face1 -> Face2: J6 must carry the rotation. J1-J5 only fine-tune.
+face2_cost_weights:
+  j1: 20.0
+  j2: 20.0
+  j3: 12.0
+  j4: 12.0
+  j5: 12.0
+  j6: 0.05
+
+ik:
+  max_attempts: 96
+  max_unique_internal: 24
+  top_n: 3
+  handover_top_n: 5
+  min_solution_distance: 0.12
+  timeout_exact: 0.20
+  timeout_nearby: 0.08
+  nearby_radius: 1.6
+  nearby_radius_local: 0.6
+  pos_tol_m: 0.003
+  ori_tol_deg: 2.0
+  face_center_tol_m: 0.002
+  face_normal_tol_deg: 3.0
+  face_up_tol_deg: 5.0
+  rng_seed: 42
+
+gripper:
+  q_a_open: 0.0
+  q_a_grasp: 0.083
+  q_b_open: 0.0
+  q_b_hold: 0.083
+
+object:
+  radius_m: 0.0075
+  height_m: 0.035
+
+pre_handover:
+  a_retract_m: 0.10
+  b_retract_m: 0.20

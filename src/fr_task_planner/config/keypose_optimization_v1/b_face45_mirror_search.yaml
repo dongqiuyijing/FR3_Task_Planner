@@ -1,0 +1,53 @@
+task_version: KEYPOSE_B_FACE45_MIRROR_SEARCH
+execution: false
+collision_relaxed: false
+B_FACE4_mirror_tcp:
+  xyz: [0.008000000000, 0.305303300000, 1.194696698000]
+  xyzw: [-0.270598507497, -0.653281292967, 0.270598507497, 0.653281292967]
+B_FACE4_mirror_object:
+  xyz: [-0.000000000000, 0.305303300000, 1.194696698000]
+  xyzw: [0.270597996964, -0.653281504437, -0.270597996964, 0.653281504437]
+B_FACE5_mirror_tcp:
+  xyz: [0.006128355548, 0.308939456413, 1.198332853226]
+  xyzw: [0.837319086072, -0.161729557247, -0.390448134425, 0.346829284716]
+B_FACE5_mirror_object:
+  xyz: [-0.000000000000, 0.305303300000, 1.194696698000]
+  xyzw: [0.706433774770, 0.477714374341, -0.521333843602, -0.030843507069]
+B_FACE4:
+  seconds: 44.635374289000
+  attempts: 420
+  ik_success: 0
+  kdl_no_converge: 376
+  unique_pose_ok: 0
+  unique_legal: 0
+  legal: false
+  candidates:
+    []
+  closest_even_if_colliding:
+    none: true
+  unique_groups:
+B_FACE5:
+  seconds: 45.841357202000
+  attempts: 420
+  ik_success: 0
+  kdl_no_converge: 386
+  unique_pose_ok: 0
+  unique_legal: 0
+  legal: false
+  candidates:
+    []
+  closest_even_if_colliding:
+    none: true
+  unique_groups:
+cannot_prove_unreachable: true
+homotopy_notes: |
+  Not a motion plan. Used only to help KDL approach the exact mirror TCP.
+  B_FACE4: homo_d7 t=0.167, homo_f6 t=0.042, homo_can4 t=0.958, homo_can5 t=0.667
+  B_FACE5: homo_d7 t=0.208, homo_f6 t=0.042, homo_can4 t=0.500, homo_can5 t=0.667
+  FACE4 nearly finished a 24-step slerp from canonical TCP; last step (~4% of 90 deg) failed.
+  Zero IK at the exact target. Do not treat as a proof of unreachability.
+geo_j12_reference_deg:
+  B_FACE4_folded_family: {j1: -170.84, j2: -143.17}
+  B_FACE4_open_family: {j1: 9.16, j2: -36.83}
+  B_FACE5_folded_family: {j1: -161.34, j2: -122.46}
+  B_FACE5_open_family: {j1: 18.66, j2: -57.54}

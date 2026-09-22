@@ -1,0 +1,116 @@
+task_version: KEYPOSE_OPTIMIZATION_V1
+keypose: B_FACE4
+note: |
+  NO LEGAL CANDIDATE means IK returned solutions, but none passed FK/limits/collision
+  plus complete-pose (center+normal+up) under the local table/column/attached-part scene.
+  This is not 'the robot cannot physically reach a nearby posture'.
+canonical_tcp:
+  xyz: [0.000000000000, 0.299646444831, 1.189039844670]
+  xyzw: [-0.382683507473, 0.000000118421, 0.000000285893, 0.923879501401]
+canonical_object:
+  xyz: [0.000000000000, 0.305303300000, 1.194696698000]
+  xyzw: [-0.270598103182, -0.270598103182, -0.653281460440, 0.653281460440]
+canonical_roll_deg: 0.0
+dual7_roll_deg: -150.000000000000
+dual7_joints: [-2.661007000000, -3.632159000000, 0.949828000000, -3.023696000000, 1.982707000000, 1.040410000000]
+dual7_fk_tcp:
+  xyz: [-0.003999978304, 0.310202281465, 1.199595720100]
+  xyzw: [-0.099045757900, 0.892399206867, -0.369643591809, 0.239117562005]
+dual7_vs_canonical_pos_err_m: 0.015454838063
+dual7_vs_canonical_ori_err_deg: 150.000006300407
+with_part_on_b:
+  unique_valid: 0
+  reject_fk: 0
+  reject_bounds: 0
+  reject_collision: 70
+  reject_dup: 0
+  collision_pairs:
+    - {pair: "arm_a_base_link <-> arm_b_forearm_link", count: 19}
+    - {pair: "arm_b_base_link <-> arm_b_forearm_link", count: 23}
+    - {pair: "arm_b_finger_l <-> arm_b_forearm_link", count: 9}
+    - {pair: "arm_b_forearm_link <-> mounting_column", count: 19}
+  rejected_samples:
+    - seed: "mirror0_t0_exact"
+      joint_values: [0.663747963172, -4.374317613377, -2.462297754067, 0.553440557061, 2.234544198800, -2.356181476094]
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663747359434, -4.374317478757, -2.462297937434, 0.553440379080, 2.234543579565, -2.356181886639]
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663747640033, -4.374317742281, -2.462297774032, 0.553440614985, 2.234543805132, -2.356181677038]
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663746005690, -4.374317153413, -2.462298440375, 0.553440902195, 2.234542220531, -2.356181342827]
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [-0.994338917502, -3.016768525275, -2.462299361108, -0.804121983492, 0.576457244859, -2.356186041216]
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663792579915, -4.374343271351, -2.462299332495, 0.553471617493, 2.234589148850, -2.356175227139]
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663747875134, -4.297542374088, -1.620293514860, -3.506946754478, -2.234544040348, 0.785395878229]
+      collision_pair: "arm_a_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t1_exact"
+      joint_values: [0.663747988500, -4.374318127247, -2.462297927079, 0.553441177244, 2.234544172101, -2.356181632546]
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [0.663746623768, -4.374317166303, -2.462298254870, 0.553440325687, 2.234542848575, -2.356181985577]
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [0.663747674714, -4.374317745193, -2.462297766543, 0.553440615723, 2.234543839086, -2.356181669284]
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [0.663751738606, -4.374289733811, -2.462299459362, 0.553414295415, 2.234547902832, -2.356181671363]
+      collision_pair: "arm_b_base_link <-> arm_b_forearm_link"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [-0.994339739449, 1.155942799948, 1.620297289650, 0.365343043758, -0.576456329575, 0.785407739733]
+      collision_pair: "arm_a_base_link <-> arm_b_forearm_link"
+without_part:
+  unique_valid: 0
+  reject_fk: 0
+  reject_bounds: 0
+  reject_collision: 70
+  reject_dup: 0
+  collision_pairs:
+    - {pair: "arm_a_base_link <-> arm_b_forearm_link", count: 13}
+    - {pair: "arm_b_base_link <-> arm_b_forearm_link", count: 15}
+    - {pair: "arm_b_finger_l <-> arm_b_forearm_link", count: 7}
+    - {pair: "arm_b_forearm_link <-> mounting_column", count: 35}
+  rejected_samples:
+    - seed: "mirror0_t0_exact"
+      joint_values: [0.663747672628, -0.124826511709, 2.462297797531, -2.337460777507, 2.234543836952, -2.356181511935]
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663712266157, -0.124780896129, 2.462326669083, -2.337539458225, 2.234508623400, -2.356188439114]
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663747664263, -0.124826387038, 2.462297759487, -2.337460963254, 2.234543828593, -2.356181671637]
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663765991358, -0.124835200924, 2.462300338745, -2.337454869935, 2.234562155977, -2.356181902820]
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663793765129, 0.526609005985, 1.620302573470, 0.994672796406, -2.234590101196, 0.785390137026]
+      collision_pair: "arm_b_finger_l <-> arm_b_forearm_link"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663747610288, -0.124826266316, 2.462297836866, -2.337461328407, 2.234543857397, -2.356181890556]
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "mirror0_t0_nearby"
+      joint_values: [0.663747640967, -0.124826386088, 2.462297768719, -2.337460964243, 2.234543807699, -2.356181657388]
+      collision_pair: "arm_b_forearm_link <-> mounting_column"
+    - seed: "mirror0_t1_exact"
+      joint_values: [0.663747665185, 0.526611497095, 1.620293460859, 0.994683029136, -2.234543830474, 0.785395904757]
+      collision_pair: "arm_b_finger_l <-> arm_b_forearm_link"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [0.663747644938, 0.526611501195, 1.620293467114, 0.994683017420, -2.234543810068, 0.785395902061]
+      collision_pair: "arm_b_finger_l <-> arm_b_forearm_link"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [0.663747663593, 0.526611496978, 1.620293462066, 0.994683031303, -2.234543827879, 0.785395909411]
+      collision_pair: "arm_b_finger_l <-> arm_b_forearm_link"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [0.663747887470, 0.526611503720, 1.620293339548, 0.994682856266, -2.234544113510, 0.785395546217]
+      collision_pair: "arm_b_finger_l <-> arm_b_forearm_link"
+    - seed: "mirror0_t1_nearby"
+      joint_values: [0.663748391805, 0.526612023280, 1.620294375916, 0.994683194271, -2.234544925919, 0.785398259972]
+      collision_pair: "arm_b_finger_l <-> arm_b_forearm_link"

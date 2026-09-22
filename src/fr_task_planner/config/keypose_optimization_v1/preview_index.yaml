@@ -1,0 +1,11 @@
+task_version: KEYPOSE_OPTIMIZATION_V1
+arm_a: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_optimization_v1/arm_a_candidates.yaml
+arm_b: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_optimization_v1/arm_b_candidates.yaml
+handover: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_optimization_v1/handover_candidates.yaml
+targets: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_optimization_v1/task_space_targets.yaml
+home_a: [-2.271411675804, -1.642863047968, -1.869634009789, -2.871167788011, -0.003375517130, 0.839900045153]
+home_b: [1.018940697148, -1.214870670667, 1.401150172209, -1.757079497313, -1.570792753708, -0.551858425983]
+q_a_open: 0
+q_a_grasp: 0.083
+q_b_open: 0
+q_b_hold: 0.083

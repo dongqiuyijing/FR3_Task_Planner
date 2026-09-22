@@ -1,0 +1,426 @@
+task_version: KEYPOSE_OPTIMIZATION_V1
+execution: false
+cost_weights: [8.000000, 8.000000, 1.000000, 1.000000, 1.000000, 0.150000]
+face2_cost_weights: [20.000000, 20.000000, 12.000000, 12.000000, 12.000000, 0.050000]
+keyposes:
+  A_HOME:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "dual8_home"
+      baseline: true
+      joint_values: [-2.271411675804, -1.642863047968, -1.869634009789, -2.871167788011, -0.003375517130, 0.839900045153]
+      task_space_pose:
+        xyz: [0.330708075171, 0.263423997832, 0.769120055746]
+        xyzw: [0.998764889890, 0.022971725479, 0.000841777561, -0.044048677197]
+      cost: 0.000000000
+      delta_joints: [0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.782888324196
+      fk_ok: true
+      fk_position_error_m: 0.000000000000
+      fk_orientation_error_deg: 0.000000000000
+  A_PREGRASP:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "baseline_exact"
+      baseline: false
+      joint_values: [-2.155823172284, -3.222149477732, -0.421558847879, -2.639635474335, 0.200535044780, 0.785380325417]
+      task_space_pose:
+        xyz: [-0.000037171815, 0.499927930135, 0.847460877936]
+        xyzw: [0.999999992739, 0.000087310114, 0.000014015239, 0.000081863417]
+      cost: 15.450695462
+      delta_joints: [0.115588503520, -1.579286429764, 1.448075161910, 0.231532313676, 0.203910561910, -0.054519719736]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.898476827716
+      fk_ok: true
+      fk_position_error_m: 0.000000000000
+      fk_orientation_error_deg: 0.000000000000
+    - index: 2
+      seed: "baseline_nearby"
+      baseline: false
+      joint_values: [-2.155823172286, -3.610803668728, 0.421558927732, -3.094099058929, 0.200535044776, 0.785380325396]
+      task_space_pose:
+        xyz: [-0.000037170785, 0.499927926026, 0.847460877100]
+        xyzw: [0.999999992739, 0.000087310114, 0.000014015237, 0.000081863416]
+      cost: 19.394445723
+      delta_joints: [0.115588503518, -1.967940620760, 2.291192937521, -0.222931270918, 0.203910561906, -0.054519719757]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.898476827714
+      fk_ok: true
+      fk_position_error_m: 0.000000004317
+      fk_orientation_error_deg: 0.000000000000
+    - index: 3
+      seed: "baseline_nearby"
+      baseline: false
+      joint_values: [0.574869798192, 0.080368681853, 0.421996535713, -0.502447524800, 2.931228011518, 0.785144586759]
+      task_space_pose:
+        xyz: [-0.000037160311, 0.499927894603, 0.847460885526]
+        xyzw: [0.999999992739, 0.000087310114, 0.000014015239, 0.000081863417]
+      cost: 44.159273287
+      delta_joints: [2.846281473996, 1.723231729821, 2.291630545502, 2.368720263211, 2.934603528648, -0.054755458394]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.123071988482
+      fk_ok: true
+      fk_position_error_m: 0.000000038112
+      fk_orientation_error_deg: 0.000000000000
+  A_GRASP:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "pregrasp_exact"
+      baseline: false
+      joint_values: [-2.317060684249, -3.287105574849, -0.272357112608, -2.723822886362, 0.039133806082, 0.785498662547]
+      task_space_pose:
+        xyz: [0.000000122254, 0.499999600215, 0.767499985185]
+        xyzw: [1.000000000000, -0.000000010928, 0.000000127617, -0.000000000029]
+      cost: 2.204357009
+      delta_joints: [-0.161237511965, -0.064956097117, 0.149201735271, -0.084187412027, -0.161401238698, 0.000118337130]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.737239315751
+      fk_ok: true
+      fk_position_error_m: 0.000000059286
+      fk_orientation_error_deg: 0.000001707547
+    - index: 2
+      seed: "pregrasp_nearby"
+      baseline: false
+      joint_values: [-2.317060684254, -3.538421084643, 0.272428318259, -3.017291485602, 0.039133805224, 0.785497339595]
+      task_space_pose:
+        xyz: [0.000000704429, 0.499997308970, 0.767499895460]
+        xyzw: [1.000000000000, -0.000000009863, 0.000000101759, -0.000000000453]
+      cost: 5.053134920
+      delta_joints: [-0.161237511970, -0.316271606911, 0.693987166138, -0.377656011267, -0.161401239556, 0.000117014178]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.737239315746
+      fk_ok: true
+      fk_position_error_m: 0.000002424983
+      fk_orientation_error_deg: 0.000000000000
+    - index: 3
+      seed: "pregrasp_nearby"
+      baseline: false
+      joint_values: [0.419210853848, 0.145424072554, 0.272558072674, -0.417953305881, 2.775405363452, 0.785427739428]
+      task_space_pose:
+        xyz: [0.000000132493, 0.499999572077, 0.767500019952]
+        xyzw: [1.000000000000, -0.000000009155, 0.000000103190, 0.000000009677]
+      cost: 53.031537131
+      delta_joints: [2.575034026132, 3.367573550286, 0.694116920553, 2.221682168454, 2.574870318672, 0.000047414011]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.278894636548
+      fk_ok: true
+      fk_position_error_m: 0.000000094909
+      fk_orientation_error_deg: 0.000000000000
+  A_LIFT:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "grasp_exact"
+      baseline: false
+      joint_values: [-2.155757502547, -3.222095749964, -0.421473917902, -2.639634711284, 0.200436976967, 0.785418351451]
+      task_space_pose:
+        xyz: [0.000000051089, 0.499999845792, 0.847499967927]
+        xyzw: [1.000000000000, -0.000000017629, 0.000000135528, -0.000000005359]
+      cost: 2.205112400
+      delta_joints: [0.161303181701, 0.065008929745, -0.149114759826, 0.084185725838, 0.161303170841, -0.000079011065]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.898542497453
+      fk_ok: true
+      fk_position_error_m: 0.000000123007
+      fk_orientation_error_deg: 0.000005122642
+    - index: 2
+      seed: "grasp_nearby"
+      baseline: false
+      joint_values: [-2.155757503149, -3.610671463021, 0.421473185371, -3.094005786261, 0.200436981954, 0.785418029529]
+      task_space_pose:
+        xyz: [0.000000025893, 0.499999913597, 0.847499981686]
+        xyzw: [1.000000000000, -0.000000011132, 0.000000104146, -0.000000002564]
+      cost: 5.104292484
+      delta_joints: [0.161303181099, -0.323566783312, 0.693832343447, -0.370185349139, 0.161303175828, -0.000079332987]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.898542496851
+      fk_ok: true
+      fk_position_error_m: 0.000000049541
+      fk_orientation_error_deg: 0.000001707547
+    - index: 3
+      seed: "grasp_nearby"
+      baseline: false
+      joint_values: [0.574961224600, 0.469062684463, -0.421441746980, -0.047569840728, 2.931155714910, 0.785449685083]
+      task_space_pose:
+        xyz: [0.000000376071, 0.499998511437, 0.847500300895]
+        xyzw: [1.000000000000, -0.000000008784, 0.000000092046, 0.000000000009]
+      cost: 58.902876430
+      delta_joints: [2.892021908848, 3.756167364172, -0.149082588904, 2.676250596394, 2.892021908784, -0.000047677433]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.123144285090
+      fk_ok: true
+      fk_position_error_m: 0.000001525580
+      fk_orientation_error_deg: 0.000000000000
+  A_FACE1:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "ref_exact"
+      baseline: false
+      joint_values: [-1.730655613620, -2.498844188709, -1.360381943718, -3.994759327349, -1.570792809768, 0.625535300472]
+      task_space_pose:
+        xyz: [-0.000000079406, 0.305302899385, 1.194696702878]
+        xyzw: [-0.270598006472, -0.653281486249, 0.270598157103, 0.653281452355]
+      cost: 13.276078648
+      delta_joints: [0.425101890020, 0.723252202565, -0.938909444867, -1.355124275861, -1.771229796346, -0.159882604527]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.630340672651
+      fk_ok: true
+      fk_position_error_m: 0.000000408438
+      fk_orientation_error_deg: 0.000013004293
+      face_center: [-0.000000078068, 0.299999599041, 1.200000004252]
+      face_normal: [0.000000178465, -0.707106712533, 0.707106849840]
+      face_up: [1.000000000000, 0.000000215152, -0.000000037236]
+      face_center_error_m: 0.000000408510
+      face_normal_error_deg: 0.000010933637
+      face_up_error_deg: 0.000012489632
+      face_pose_check: PASS
+    - index: 2
+      seed: "baseline_exact"
+      baseline: false
+      joint_values: [-1.730657532797, -2.096082272275, -2.361345599522, -0.254957192512, 1.570792677784, -2.516051849249]
+      task_space_pose:
+        xyz: [-0.000000632926, 0.305303192164, 1.194696156451]
+        xyzw: [-0.270598144623, -0.653281381349, 0.270598069034, 0.653281536510]
+      cost: 18.599039833
+      delta_joints: [0.425099970843, 1.126014118999, -1.939873100671, 2.384677858976, 1.370355691206, -3.301469754248]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.466054400478
+      fk_ok: true
+      fk_position_error_m: 0.000000839940
+      fk_orientation_error_deg: 0.000013872180
+      face_center: [-0.000000633037, 0.299999892227, 1.199999458231]
+      face_normal: [-0.000000014790, -0.707106658323, 0.707106904050]
+      face_up: [1.000000000000, -0.000000182735, -0.000000161819]
+      face_center_error_m: 0.000000840157
+      face_normal_error_deg: 0.000001207418
+      face_up_error_deg: 0.000013976877
+      face_pose_check: PASS
+  A_FACE2:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "face1_exact"
+      baseline: false
+      joint_values: [-1.896553820876, -2.137280528820, -2.177397752773, -2.867641878789, -1.777981589078, -2.609410515746]
+      task_space_pose:
+        xyz: [0.000000000940, 0.305303300245, 1.194696696875]
+        xyzw: [-0.390448348351, 0.346829043506, 0.837319186442, -0.161729038419]
+      cost: 77.891440424
+      delta_joints: [-0.165896288079, -0.041198256545, 0.183947846749, -2.612684686277, -3.348774266862, -0.093358666497]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.444889484254
+      fk_ok: true
+      fk_position_error_m: 0.000000001487
+      fk_orientation_error_deg: 0.000000000000
+      face_center: [0.000000000935, 0.300000000255, 1.199999998602]
+      face_normal: [-0.000000000649, -0.707106665426, 0.707106896947]
+      face_up: [0.766044442181, -0.454519553224, -0.454519403702]
+      face_center_error_m: 0.000000001701
+      face_normal_error_deg: 0.000000000000
+      face_up_error_deg: 0.000000000000
+      face_pose_check: PASS
+    - index: 2
+      seed: "face1_j6off"
+      baseline: false
+      joint_values: [0.128839767545, -0.765711187084, 2.071148556051, 0.157964393406, 0.879595625895, 2.523736813651]
+      task_space_pose:
+        xyz: [0.000000006850, 0.305303290436, 1.194696681240]
+        xyzw: [-0.390448345644, 0.346829071253, 0.837319179916, -0.161729019234]
+      cost: 130.488710664
+      delta_joints: [1.859497300342, 1.330371085191, 4.432494155573, 0.412921585918, -0.691197051889, 5.039788662900]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.530563186349
+      fk_ok: true
+      fk_position_error_m: 0.000000020477
+      fk_orientation_error_deg: 0.000004182620
+      face_center: [0.000000006439, 0.299999990641, 1.199999983162]
+      face_normal: [-0.000000054678, -0.707106639343, 0.707106923030]
+      face_up: [0.766044428219, -0.454519611021, -0.454519369435]
+      face_center_error_m: 0.000000020312
+      face_normal_error_deg: 0.000003622255
+      face_up_error_deg: 0.000004004553
+      face_pose_check: PASS
+  A_FACE3:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "face2_nearby"
+      baseline: false
+      joint_values: [-2.329863070053, -3.201471456284, -0.469689131017, -2.612011640278, 2.382526073115, 2.443475497541]
+      task_space_pose:
+        xyz: [0.000000005453, 0.312374349985, 1.187625628511]
+        xyzw: [0.258537129087, -0.282143766096, 0.681155464231, 0.624163986212]
+      cost: 18.861772735
+      delta_joints: [-0.433306803239, -1.064191905779, 1.707708982072, 0.255630887592, 4.160510119704, 5.052887154247]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.610824502459
+      fk_ok: true
+      fk_position_error_m: 0.000000017874
+      fk_orientation_error_deg: 0.000000000000
+      face_center: [0.000000005469, 0.299999983329, 1.199999999196]
+      face_normal: [0.000000000905, -0.707106666100, 0.707106896273]
+      face_up: [0.996194698122, 0.061628427138, 0.061628405801]
+      face_center_error_m: 0.000000017564
+      face_normal_error_deg: 0.000000000000
+      face_up_error_deg: 0.000000000000
+      face_pose_check: PASS
+    - index: 2
+      seed: "face2_exact"
+      baseline: false
+      joint_values: [-2.329863069967, -3.634365397868, 0.469688870758, -3.118495700573, 2.382526073202, 2.443475497400]
+      task_space_pose:
+        xyz: [0.000000000530, 0.312374364844, 1.187625628944]
+        xyzw: [0.258537129120, -0.282143766065, 0.681155464220, 0.624163986225]
+      cost: 23.259524554
+      delta_joints: [-0.433306803153, -1.497085847363, 2.647086983847, -0.250853172703, 4.160510119791, 5.052887154106]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.610824502600
+      fk_ok: true
+      fk_position_error_m: 0.000000002221
+      fk_orientation_error_deg: 0.000000000000
+      face_center: [0.000000000547, 0.299999998187, 1.199999999629]
+      face_normal: [0.000000000977, -0.707106666100, 0.707106896273]
+      face_up: [0.996194698128, 0.061628427141, 0.061628405704]
+      face_center_error_m: 0.000000001930
+      face_normal_error_deg: 0.000000000000
+      face_up_error_deg: 0.000000000000
+      face_pose_check: PASS
+    - index: 3
+      seed: "baseline_nearby"
+      baseline: false
+      joint_values: [0.398510665019, 0.059885931194, 0.469672089077, -0.529558963001, -1.172285486661, 2.443454667553]
+      task_space_pose:
+        xyz: [0.000000054639, 0.312374208804, 1.187625692776]
+        xyzw: [0.258537092182, -0.282143792163, 0.681155497321, 0.624163953604]
+      cost: 42.286641584
+      delta_joints: [2.295066931833, 2.197165481699, 2.647070202166, 2.338083564869, 0.605698559928, 5.052866324259]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.610845332447
+      fk_ok: true
+      fk_position_error_m: 0.000000179106
+      fk_orientation_error_deg: 0.000007040398
+      face_center: [0.000000053827, 0.299999842300, 1.200000063614]
+      face_normal: [-0.000000046401, -0.707106657354, 0.707106905019]
+      face_up: [0.996194687661, 0.061628479130, 0.061628522915]
+      face_center_error_m: 0.000000178363
+      face_normal_error_deg: 0.000002699869
+      face_up_error_deg: 0.000007294645
+      face_pose_check: PASS
+  A_PRE_HANDOVER:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "face3_exact"
+      baseline: false
+      joint_values: [-2.589737877634, -2.074462111989, -1.665664941298, -0.972258253820, 1.570792653603, -2.589734204443]
+      task_space_pose:
+        xyz: [0.099999999949, 0.399999999964, 0.899999999968]
+        xyzw: [-0.500000000026, -0.499999999984, 0.499999999974, 0.500000000016]
+      cost: 2.444718526
+      delta_joints: [-0.259877284321, 0.875414230213, -1.286161367173, 1.981534077233, -0.811733915441, -5.033211630912]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.464562122366
+      fk_ok: true
+      fk_position_error_m: 0.000000000070
+      fk_orientation_error_deg: 0.000000000000
+    - index: 2
+      seed: "han_exact"
+      baseline: false
+      joint_values: [-2.533985915824, -2.545374965640, -0.745374037250, -1.815969368901, 1.501867248765, -2.520207110794]
+      task_space_pose:
+        xyz: [0.092105373427, 0.438935412356, 0.900001178543]
+        xyzw: [0.390698587105, 0.589367991848, -0.589367982695, -0.390698560521]
+      cost: 1.039425807
+      delta_joints: [-0.217227792660, 0.665098014910, -0.707587306776, 1.219809275387, -0.885688722636, -4.975814451039]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.520314084176
+      fk_ok: true
+      fk_position_error_m: 0.000006569359
+      fk_orientation_error_deg: 0.000009809112
+    - index: 3
+      seed: "face3_exact"
+      baseline: false
+      joint_values: [-2.533985942167, -3.230606794223, 0.745305812776, -2.621417208319, 1.501867201924, -2.520207147122]
+      task_space_pose:
+        xyz: [0.092106088069, 0.438941796567, 0.900000006990]
+        xyzw: [0.390698650601, 0.589367977584, -0.589367929951, -0.390698598106]
+      cost: 3.638082961
+      delta_joints: [-0.217227522271, -0.409607086883, 1.647007020418, -0.060079972654, -0.885688619394, -4.975814200158]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.520314057833
+      fk_ok: true
+      fk_position_error_m: 0.000000039948
+      fk_orientation_error_deg: 0.000005399739
+  A_HANDOVER:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "face3_nearby"
+      baseline: false
+      joint_values: [-2.589739840717, -2.326051961796, -1.755861867870, -0.630471470214, 1.570792671382, -2.589736167442]
+      task_space_pose:
+        xyz: [-0.000000499048, 0.399999202468, 0.899999693192]
+        xyzw: [-0.499999998927, -0.499999993271, 0.500000001114, 0.500000006687]
+      cost: 17.922811536
+      delta_joints: [-0.259877284321, 0.875414230213, -1.286161367173, 1.981534077233, -0.811733915441, -5.033211630912]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.464560159283
+      fk_ok: true
+      fk_position_error_m: 0.000000989564
+      fk_orientation_error_deg: 0.000000000000
+    - index: 2
+      seed: "face3_exact"
+      baseline: false
+      joint_values: [-2.547090349056, -2.536368177099, -1.177287807473, -1.392196272060, 1.496837864187, -2.532338987569]
+      task_space_pose:
+        xyz: [-0.000000000135, 0.399999997929, 0.899999999802]
+        xyzw: [0.390698623491, 0.589367954363, -0.589367954350, -0.390698623440]
+      cost: 15.294799143
+      delta_joints: [-0.217227792660, 0.665098014910, -0.707587306776, 1.219809275387, -0.885688722636, -4.975814451039]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.507209650944
+      fk_ok: true
+      fk_position_error_m: 0.000000002085
+      fk_orientation_error_deg: 0.000000000000
+    - index: 3
+      seed: "face3_nearby"
+      baseline: false
+      joint_values: [-2.547090078667, -3.611073278892, 1.177306519721, -2.672085520101, 1.496837967429, -2.532338736688]
+      task_space_pose:
+        xyz: [0.000000710800, 0.399997363379, 0.900000653744]
+        xyzw: [-0.390698622260, -0.589367955049, 0.589367955280, 0.390698622233]
+      cost: 17.329379151
+      delta_joints: [-0.217227522271, -0.409607086883, 1.647007020418, -0.060079972654, -0.885688619394, -4.975814200158]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.507209921333
+      fk_ok: true
+      fk_position_error_m: 0.000002807915
+      fk_orientation_error_deg: 0.000000000000

@@ -631,6 +631,87 @@ ament_target_dependencies(
   moveit_ros_planning_interface
 )
 
+# KEYPOSE V1: multi-IK keypose candidates. No execute, no path planning.
+add_executable(
+  keypose_candidate_search
+  src/keypose_candidate_search.cpp
+)
+target_link_libraries(
+  keypose_candidate_search
+  yaml-cpp
+)
+ament_target_dependencies(
+  keypose_candidate_search
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  geometric_shapes
+)
+
+# KEYPOSE V1: B_FACE4/5 root-cause diagnosis only. No candidate rewrite.
+add_executable(
+  keypose_b_face_diag
+  src/keypose_b_face_diag.cpp
+)
+target_link_libraries(
+  keypose_b_face_diag
+  yaml-cpp
+)
+ament_target_dependencies(
+  keypose_b_face_diag
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  visualization_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  geometric_shapes
+)
+
+# KEYPOSE V1: B_FACE4/5 correct-mirror IK only. No path, no other keyposes.
+add_executable(
+  keypose_b_face_mirror_search
+  src/keypose_b_face_mirror_search.cpp
+)
+target_link_libraries(
+  keypose_b_face_mirror_search
+  yaml-cpp
+)
+ament_target_dependencies(
+  keypose_b_face_mirror_search
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  geometric_shapes
+)
+
+# KEYPOSE V1: B_FACE4 only, A_FACE1 YZ-mirror + grasp-offset TCP.
+add_executable(
+  keypose_b_face4_solve
+  src/keypose_b_face4_solve.cpp
+)
+target_link_libraries(
+  keypose_b_face4_solve
+  yaml-cpp
+)
+ament_target_dependencies(
+  keypose_b_face4_solve
+  rclcpp
+  geometry_msgs
+  sensor_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  geometric_shapes
+)
+
 # DUAL-8-HOME: live Current→Home planner. PLAN ONLY.
 add_executable(
   dual8_current_to_home_test
@@ -708,6 +789,10 @@ install(TARGETS
   dual_complete_six_face_task_test
   dual7_real_task_executor
   dual8_current_to_home_test
+  keypose_candidate_search
+  keypose_b_face_diag
+  keypose_b_face_mirror_search
+  keypose_b_face4_solve
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -715,6 +800,10 @@ install(PROGRAMS
   scripts/step15_sim_playback.py
   scripts/dual_5t_rviz_preview.py
   scripts/dual_complete_six_face_rviz_preview.py
+  scripts/keypose_candidate_rviz_preview.py
+  scripts/keypose_b_face_diag_preview.py
+  scripts/keypose_b_face_mirror_preview.py
+  scripts/keypose_b_face4_preview.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

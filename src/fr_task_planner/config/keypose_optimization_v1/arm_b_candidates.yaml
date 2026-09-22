@@ -1,0 +1,202 @@
+task_version: KEYPOSE_OPTIMIZATION_V1
+execution: false
+cost_weights: [8.000000, 8.000000, 1.000000, 1.000000, 1.000000, 0.150000]
+face2_cost_weights: [20.000000, 20.000000, 12.000000, 12.000000, 12.000000, 0.050000]
+keyposes:
+  B_HOME:
+    legal: true
+    note: "same joints as B_PRE_HANDOVER candidate 1"
+    candidates:
+    - index: 1
+      seed: "B_PRE_HANDOVER"
+      baseline: false
+      joint_values: [1.018940697148, -1.214870670667, 1.401150172209, -1.757079497313, -1.570792753708, -0.551858425983]
+      task_space_pose:
+        xyz: [-0.207999989915, 0.399999995975, 0.900000000958]
+        xyzw: [0.707106746410, -0.000000303275, 0.707106815963, -0.000000316756]
+      cost: 0.0
+      delta_joints: [0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 1.426249827791
+      fk_ok: true
+      fk_position_error_m: 0.000000010900
+      fk_orientation_error_deg: 0.000015835142
+    - index: 2
+      seed: "mirror_j12_from_A_HOME"
+      baseline: false
+      joint_values: [-2.440926423345, -1.642863048061, 1.401150172209, -1.757079497313, -1.570792753708, -0.551858425983]
+      task_space_pose:
+        xyz: [-0.391607813339, -0.416595878714, 1.166984638649]
+        xyzw: [0.259246909675, 0.671083957884, -0.040253881261, 0.693409681457]
+      cost: 0.109878339
+      delta_joints: [-3.459867120493, -0.427992377394, 0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.613373576655
+      fk_ok: true
+      fk_position_error_m: 0.000000000000
+      fk_orientation_error_deg: 0.000000000000
+    - index: 3
+      seed: "mirror_j12_from_A_HOME"
+      baseline: false
+      joint_values: [1.018940697148, -1.214870670667, 1.401150172209, -1.757079497313, -1.570792753708, -0.551858425983]
+      task_space_pose:
+        xyz: [-0.207999989915, 0.399999995975, 0.900000000958]
+        xyzw: [0.707106746410, -0.000000303275, 0.707106815963, -0.000000316756]
+      cost: 9.804497653
+      delta_joints: [0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000, 0.000000000000]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 1.426249827791
+      fk_ok: true
+      fk_position_error_m: 0.000000000000
+      fk_orientation_error_deg: 0.000000000000
+  B_PRE_HANDOVER:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "mirror1_t0_exact"
+      baseline: false
+      joint_values: [1.018940697148, -1.214870670667, 1.401150172209, -1.757079497313, -1.570792753708, -0.551858425983]
+      task_space_pose:
+        xyz: [-0.207999989915, 0.399999995975, 0.900000000958]
+        xyzw: [0.707106746410, -0.000000303275, 0.707106815963, -0.000000316756]
+      cost: 5.029191270
+      delta_joints: [2.677003486543, 1.926721982923, 0.004886770613, 1.140167060998, -3.141589080503, -0.464591963383]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 1.426249827791
+      fk_ok: true
+      fk_position_error_m: 0.000000010900
+      fk_orientation_error_deg: 0.000015835142
+    - index: 2
+      seed: "mirror1_t0_exact"
+      baseline: false
+      joint_values: [1.170819026714, -1.060073309554, 1.165329903437, 1.092146435693, 1.717722499281, 2.713818770294]
+      task_space_pose:
+        xyz: [-0.191580678322, 0.319000960181, 0.899999997872]
+        xyzw: [0.693011783271, 0.140480130482, 0.693011662206, -0.140480736168]
+      cost: 16.379335876
+      delta_joints: [2.828881816109, 2.081519344036, -0.230933498159, 3.989392994003, 0.146926172487, 2.801085232894]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.340481229706
+      fk_ok: true
+      fk_position_error_m: 0.000000026110
+      fk_orientation_error_deg: 0.000021733529
+    - index: 3
+      seed: "mirror0_t0_nearby"
+      baseline: false
+      joint_values: [1.170818985003, 0.292538126309, -2.214223237640, -0.022513027588, -1.717722479594, -0.427782433861]
+      task_space_pose:
+        xyz: [-0.191580685451, 0.319000984775, 0.899999999330]
+        xyzw: [0.693011784704, 0.140480128104, 0.693011661576, -0.140480734582]
+      cost: 9.785979881
+      delta_joints: [2.828881774398, 3.434130779899, -3.610486639235, 2.874733530723, -3.288518806389, -0.340515971262]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.613176762360
+      fk_ok: true
+      fk_position_error_m: 0.000000001464
+      fk_orientation_error_deg: 0.000021867275
+  B_HANDOVER:
+    legal: true
+    candidates:
+    - index: 1
+      seed: "mirror0_t1_nearby"
+      baseline: false
+      joint_values: [1.018942414936, -0.838801221711, 1.754164739795, -2.486163518247, -1.570792654670, -0.551856709803]
+      task_space_pose:
+        xyz: [-0.007999747765, 0.399999767357, 0.900000016192]
+        xyzw: [0.707106780834, -0.000000309299, 0.707106781539, -0.000000309595]
+      cost: 0.792095646
+      delta_joints: [0.000001717788, 0.376069448956, 0.353014567586, -0.729084020934, 0.000000099038, 0.000001716180]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 1.073235260205
+      fk_ok: true
+      fk_position_error_m: 0.000000343522
+      fk_orientation_error_deg: 0.000014688877
+    - index: 2
+      seed: "mirror0_t1_nearby"
+      baseline: false
+      joint_values: [1.086992241870, -0.591858476093, 1.117336235605, 0.661622203381, 1.686726334763, 2.635251828020]
+      task_space_pose:
+        xyz: [-0.007368487894, 0.396884652949, 0.900000000108]
+        xyzw: [0.693011782312, 0.140480129837, 0.693011663418, -0.140480735566]
+      cost: 3.146407219
+      delta_joints: [-0.083826784844, 0.468214833461, -0.047993667832, -0.430524232312, -0.030996164518, -0.078566942275]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.419048171980
+      fk_ok: true
+      fk_position_error_m: 0.000000000336
+      fk_orientation_error_deg: 0.000021733529
+    - index: 3
+      seed: "mirror0_t1_nearby"
+      baseline: false
+      joint_values: [1.086992241870, -0.591858476093, 1.117336235605, 0.661622203381, 1.686726334763, 2.635251828020]
+      task_space_pose:
+        xyz: [-0.007368487894, 0.396884652949, 0.900000000108]
+        xyzw: [0.693011782312, 0.140480129837, 0.693011663418, -0.140480735566]
+      cost: 3.146407219
+      delta_joints: [-0.083826743133, -0.884396602402, 3.331559473245, 0.684135230969, 3.404448814358, 3.063034261881]
+      collision_check: PASS
+      joint_limit_check: PASS
+      joint_limit_margin: 0.419048171980
+      fk_ok: true
+      fk_position_error_m: 0.000000000336
+      fk_orientation_error_deg: 0.000021733529
+  B_FACE4:
+    legal: true
+    note: "open-family local IK J1≈5° J2≈-47° ±10° from DUAL-7 I1/I2"
+    candidates:
+    - index: 1
+      seed: "j1_5_j2_-47"
+      baseline: false
+      joint_values: [0.120432175714, -0.964361705429, 1.898008574140, -2.114311105992, -1.524800081911, 0.896736746457]
+      task_space_pose:
+        xyz: [-0.007391156332, 0.307468015901, 1.196861457889]
+        xyzw: [-0.212607646175, 0.768177868913, -0.318189434760, 0.513279878923]
+      collision_check: PASS
+      joint_limit_check: PASS
+      face_center_error_m: 0.000000131057
+      face_normal_error_deg: 0.000070744820
+      face_up_error_deg: 112.500004774991
+      face_pose_check: PASS
+  B_FACE5:
+    legal: true
+    note: "open-family local IK J1≈5° J2≈-47° ±10° from DUAL-7 I1/I2"
+    candidates:
+    - index: 1
+      seed: "j1_5_j2_-47"
+      baseline: false
+      joint_values: [0.120432175714, -0.964361705429, 1.898008574140, -2.114311105992, -1.524800081911, -2.244855907133]
+      task_space_pose:
+        xyz: [-0.007391156332, 0.307468015901, 1.196861457889]
+        xyzw: [0.768177868913, 0.212607646175, 0.513279878923, 0.318189434760]
+      collision_check: PASS
+      joint_limit_check: PASS
+      face_center_error_m: 0.000000131057
+      face_normal_error_deg: 0.000070734515
+      face_up_error_deg: 112.500004774991
+      face_pose_check: PASS
+  B_FACE6:
+    legal: true
+    note: "local from B_FACE5, J1/J2 minimized"
+    candidates:
+    - index: 1
+      seed: "B_FACE5"
+      baseline: false
+      joint_values: [0.770844845313, 0.113265160868, 0.345799789486, -0.459077791224, -2.370747973237, -2.356207583198]
+      task_space_pose:
+        xyz: [-0.000002300822, 0.318023721923, 1.181968673974]
+        xyzw: [0.382683356176, -0.000000234848, 0.000000571958, 0.923879564070]
+      collision_check: PASS
+      joint_limit_check: PASS
+      face_center_error_m: 0.000007843705
+      face_normal_error_deg: 0.000000000000
+      face_up_error_deg: 89.999999930649
+      face_pose_check: PASS
+      delta_from_B_FACE5_deg: [37.265900909833, 61.743471328729, -88.935012283818, 94.837883045676, -48.469243860950, -6.379981080253]

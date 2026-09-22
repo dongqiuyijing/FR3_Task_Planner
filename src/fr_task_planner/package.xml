@@ -31,7 +31,9 @@
   <build_depend>yaml-cpp</build_depend>
 
   <exec_depend>fairino3_v6_moveit2_config</exec_depend>
+  <exec_depend>fairino3_dual_moveit_config</exec_depend>
   <exec_depend>fr_control</exec_depend>
+  <exec_depend>xacro</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>moveit_configs_utils</exec_depend>
