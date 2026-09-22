@@ -1631,8 +1631,10 @@ private:
 
   bool planCurrentToHome(const std::string& group, const std::vector<std::string>& names,
                          const std::vector<double>& live_a, const std::vector<double>& live_b,
-                         const std::vector<double>& goal, TrajectorySegmentRecord& out, std::string& err)
+                         const std::vector<double>& goal, TrajectorySegmentRecord& out, std::string& err,
+                         bool& used_rrtconnect)
   {
+    used_rrtconnect = false;
     std::string block;
     if (directHomeFree(group, names, live_a, live_b, goal, block))
     {
@@ -1644,6 +1646,7 @@ private:
     RCLCPP_INFO(node_->get_logger(),
                 "%s Current→Home direct blocked (%s); using existing move_group RRTConnect",
                 group.c_str(), block.c_str());
+    used_rrtconnect = true;
     return planArmHome(group, names, live_a, live_b, goal, out, err);
   }
 
@@ -1761,25 +1764,33 @@ private:
     }
     auto live_a = qa;
     auto live_b = qb;
+    constexpr double kRrtHomeJointVmaxRadS = 0.2;
     if (!at_a.ok)
     {
       TrajectorySegmentRecord seg;
       std::string err;
+      bool used_rrtconnect = false;
       RCLCPP_INFO(node_->get_logger(), "planning Arm A Current→Home with Arm B held at live");
-      if (!planCurrentToHome("arm_a", kJa, live_a, live_b, home_a_, seg, err))
+      if (!planCurrentToHome("arm_a", kJa, live_a, live_b, home_a_, seg, err, used_rrtconnect))
       {
         RCLCPP_ERROR(node_->get_logger(), "Arm A Current→Home plan failed: %s", err.c_str());
         return false;
       }
-      assignConservativeTimes(seg, vmax_);
-      auto scaled = scaleSegment(seg, cfg_.trajectory_speed_scale);
+      // RRTConnect：直接以最终目标 0.2 rad/s 分配时间，不再乘 0.2。
+      // 直接路径：保留原本的轨迹时间和 trajectory_speed_scale。
+      assignConservativeTimes(seg, used_rrtconnect ? kRrtHomeJointVmaxRadS : vmax_);
+      const double home_scale = used_rrtconnect ? 1.0 : cfg_.trajectory_speed_scale;
+      auto scaled = scaleSegment(seg, home_scale);
       if (!scaled.ok)
       {
         RCLCPP_ERROR(node_->get_logger(), "Arm A Home scale failed: %s", scaled.error.c_str());
         return false;
       }
-      RCLCPP_INFO(node_->get_logger(), "EFFECTIVE_SPEED_SCALE=%.3f Current→Home arm_a",
-                  cfg_.trajectory_speed_scale);
+      RCLCPP_INFO(node_->get_logger(),
+                  "Current→Home arm_a method=%s home_scale=%.3f assign_vmax=%.3f "
+                  "EFFECTIVE_SPEED_SCALE=%.3f",
+                  used_rrtconnect ? "rrtconnect" : "direct", home_scale,
+                  used_rrtconnect ? kRrtHomeJointVmaxRadS : vmax_, home_scale);
       if (!sendTraj("arm_a", scaled.segment))
         return false;
       if (!waitEnd("arm_a", kJa, home_a_))
@@ -1795,21 +1806,28 @@ private:
     {
       TrajectorySegmentRecord seg;
       std::string err;
+      bool used_rrtconnect = false;
       RCLCPP_INFO(node_->get_logger(), "planning Arm B Current→Home with Arm A held at Home");
-      if (!planCurrentToHome("arm_b", kJb, live_a, live_b, home_b_, seg, err))
+      if (!planCurrentToHome("arm_b", kJb, live_a, live_b, home_b_, seg, err, used_rrtconnect))
       {
         RCLCPP_ERROR(node_->get_logger(), "Arm B Current→Home plan failed: %s", err.c_str());
         return false;
       }
-      assignConservativeTimes(seg, vmax_);
-      auto scaled = scaleSegment(seg, cfg_.trajectory_speed_scale);
+      // RRTConnect：直接以最终目标 0.2 rad/s 分配时间，不再乘 0.2。
+      // 直接路径：保留原本的轨迹时间和 trajectory_speed_scale。
+      assignConservativeTimes(seg, used_rrtconnect ? kRrtHomeJointVmaxRadS : vmax_);
+      const double home_scale = used_rrtconnect ? 1.0 : cfg_.trajectory_speed_scale;
+      auto scaled = scaleSegment(seg, home_scale);
       if (!scaled.ok)
       {
         RCLCPP_ERROR(node_->get_logger(), "Arm B Home scale failed: %s", scaled.error.c_str());
         return false;
       }
-      RCLCPP_INFO(node_->get_logger(), "EFFECTIVE_SPEED_SCALE=%.3f Current→Home arm_b",
-                  cfg_.trajectory_speed_scale);
+      RCLCPP_INFO(node_->get_logger(),
+                  "Current→Home arm_b method=%s home_scale=%.3f assign_vmax=%.3f "
+                  "EFFECTIVE_SPEED_SCALE=%.3f",
+                  used_rrtconnect ? "rrtconnect" : "direct", home_scale,
+                  used_rrtconnect ? kRrtHomeJointVmaxRadS : vmax_, home_scale);
       if (!sendTraj("arm_b", scaled.segment))
         return false;
       if (!waitEnd("arm_b", kJb, home_b_))
