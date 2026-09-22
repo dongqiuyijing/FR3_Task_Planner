@@ -701,6 +701,51 @@ target_link_libraries(
   keypose_b_face4_solve
   yaml-cpp
 )
+add_executable(
+  keypose_v1_connect
+  src/keypose_v1_connect.cpp
+)
+target_link_libraries(
+  keypose_v1_connect
+  yaml-cpp
+)
+ament_target_dependencies(
+  keypose_v1_connect
+  rclcpp
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+add_executable(
+  keypose_v1_sequence_check
+  src/keypose_v1_sequence_check.cpp
+)
+target_include_directories(
+  keypose_v1_sequence_check
+  PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(
+  keypose_v1_sequence_check
+  yaml-cpp
+)
+add_executable(
+  keypose_v1_b_home
+  src/keypose_v1_b_home.cpp
+)
+target_link_libraries(
+  keypose_v1_b_home
+  yaml-cpp
+)
+ament_target_dependencies(
+  keypose_v1_b_home
+  rclcpp
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+  geometric_shapes
+)
 ament_target_dependencies(
   keypose_b_face4_solve
   rclcpp
@@ -793,6 +838,9 @@ install(TARGETS
   keypose_b_face_diag
   keypose_b_face_mirror_search
   keypose_b_face4_solve
+  keypose_v1_connect
+  keypose_v1_b_home
+  keypose_v1_sequence_check
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -804,6 +852,9 @@ install(PROGRAMS
   scripts/keypose_b_face_diag_preview.py
   scripts/keypose_b_face_mirror_preview.py
   scripts/keypose_b_face4_preview.py
+  scripts/keypose_v1_tour_preview.py
+  scripts/keypose_v1_a_return_preview.py
+  scripts/keypose_v1_b_home_preview.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

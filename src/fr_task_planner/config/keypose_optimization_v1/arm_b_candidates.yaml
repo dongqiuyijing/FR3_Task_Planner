@@ -5,12 +5,12 @@ face2_cost_weights: [20.000000, 20.000000, 12.000000, 12.000000, 12.000000, 0.05
 keyposes:
   B_HOME:
     legal: true
-    note: "same joints as B_PRE_HANDOVER candidate 1"
+    note: "hover above placement (-0.45, 0.40), TCP +Z down, seeded from B_PRE_HANDOVER"
     candidates:
     - index: 1
       seed: "B_PRE_HANDOVER"
       baseline: false
-      joint_values: [1.018940697148, -1.214870670667, 1.401150172209, -1.757079497313, -1.570792753708, -0.551858425983]
+      joint_values: [0.464419808974, -0.896977789692, 1.376848713707, -3.621451934628, 0.320978354444, -0.785409211766]
       task_space_pose:
         xyz: [-0.207999989915, 0.399999995975, 0.900000000958]
         xyzw: [0.707106746410, -0.000000303275, 0.707106815963, -0.000000316756]

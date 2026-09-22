@@ -1,6 +1,7 @@
 // DUAL-7 dual-arm real executor. Reuses STEP13 frozen-executor helpers.
 // Default DRY RUN. Does not rewrite the single-arm executor.
 #include "fr_task_planner/frozen_executor.hpp"
+#include "fr_task_planner/keypose_v1_gates.hpp"
 #include "fr_task_planner/winner_trajectory_io.hpp"
 
 #include <algorithm>
@@ -21,9 +22,14 @@
 
 #include <control_msgs/action/follow_joint_trajectory.hpp>
 #include <fairino_msgs/srv/gripper_bridge.hpp>
+#include <geometry_msgs/msg/pose.hpp>
 #include <moveit_msgs/action/move_group.hpp>
 #include <moveit_msgs/msg/constraints.hpp>
 #include <moveit_msgs/msg/joint_constraint.hpp>
+#include <moveit_msgs/srv/apply_planning_scene.hpp>
+#include <moveit_msgs/srv/get_planning_scene.hpp>
+#include <moveit_msgs/srv/get_state_validity.hpp>
+#include <shape_msgs/msg/solid_primitive.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
@@ -347,7 +353,16 @@ public:
     }
 
     std::string err;
-    if (!buildStages(err))
+    if (task_mode_ == "keypose_v1")
+    {
+      if (!buildKeyposeStages(err))
+      {
+        RCLCPP_ERROR(node_->get_logger(), "keypose_v1 load failed: %s", err.c_str());
+        logOutcome(false, false, false, false, err);
+        return 1;
+      }
+    }
+    else if (!buildStages(err))
     {
       RCLCPP_ERROR(node_->get_logger(), "task load failed: %s", err.c_str());
       logOutcome(false, false, false, false, err);
@@ -577,6 +592,10 @@ private:
     handover_release_delay_sec_ = getDouble(node_, "handover_release_delay_sec", 2.0);
     if (handover_release_delay_sec_ < 0.0)
       handover_release_delay_sec_ = 0.0;
+    grasp_post_close_wait_sec_ = getDouble(node_, "grasp_post_close_wait_sec", -1.0);
+    handover_post_close_wait_sec_ = getDouble(node_, "handover_post_close_wait_sec", -1.0);
+    if (handover_post_close_wait_sec_ >= 0.0)
+      handover_release_delay_sec_ = handover_post_close_wait_sec_;
     already_act_a_ = getBool(node_, "gripper_a_already_activated", false);
     already_act_b_ = getBool(node_, "gripper_b_already_activated", false);
     hw_margin_ms_ = getInt(node_, "hardware_servo_restart_margin_ms", 4000);
@@ -584,9 +603,16 @@ private:
     resume_from_ = getString(node_, "resume_from", "");
     task_mode_ = getString(node_, "task_mode", "home_only");
     inject_failure_ = getString(node_, "inject_failure", "");
-    resume_object_owner_ = getString(node_, "resume_object_owner", "unknown");
+    empty_gripper_confirmation_ = getString(node_, "empty_gripper_confirmation", "");
     max_joint_age_sec_ = getDouble(node_, "max_joint_age_sec", 2.0);
     b_grasp_confirm_timeout_sec_ = getDouble(node_, "b_grasp_confirm_timeout_sec", 600.0);
+    if (task_mode_ == "keypose_v1")
+    {
+      auto_continue_ = true;
+      continue_after_home_ = true;
+      plan_home_ = true;
+      home_plan_velocity_scale_ = 1.0;
+    }
     if (task_mode_ == "full_task")
     {
       auto_continue_ = true;
@@ -764,6 +790,116 @@ private:
                 b_home_to_pre_file_.c_str());
     rec.deployable = false;
     return rec;
+  }
+
+  bool buildKeyposeStages(std::string& err)
+  {
+    const std::string path = getString(
+        node_, "keypose_v1_trajectory",
+        std::string(std::getenv("HOME") ? std::getenv("HOME") : "") +
+            "/fr_task_ws/src/fr_task_planner/config/keypose_v1_six_face_trajectory.yaml");
+    YAML::Node y;
+    try
+    {
+      y = YAML::LoadFile(path);
+    }
+    catch (const std::exception& e)
+    {
+      err = std::string("keypose trajectory: ") + e.what();
+      return false;
+    }
+    if (y["keypose_dir"])
+      keypose_dir_ = y["keypose_dir"].as<std::string>();
+    yamlVec(y["home_a"], home_a_);
+    yamlVec(y["home_b"], home_b_);
+    home_b_deg_.clear();
+    if (!y["stages"] || !y["stages"].IsSequence())
+    {
+      err = "keypose trajectory has no stages";
+      return false;
+    }
+    Stage home;
+    home.id = "dual_current_to_home";
+    home.kind = "runtime_replan";
+    home.moving = "dual";
+    home.logical = "Dual_Current_to_Home";
+    home.source = "live /joint_states → KEYPOSE homes; zero gripper; not stored in the six-face file";
+    stages_.push_back(home);
+    const double file_scale = y["speed_scale"] ? y["speed_scale"].as<double>() : 0.2;
+    if (std::abs(cfg_.trajectory_speed_scale - file_scale) > 1e-9)
+    {
+      RCLCPP_WARN(node_->get_logger(),
+                  "trajectory_speed_scale %.3f != file speed_scale %.3f; execution uses the parameter",
+                  cfg_.trajectory_speed_scale, file_scale);
+    }
+    if (std::abs(cfg_.trajectory_speed_scale - 0.2) > 1e-9)
+    {
+      err = "keypose_v1 requires trajectory_speed_scale 0.2; refusing a silent smaller scale";
+      return false;
+    }
+    for (const auto& s : y["stages"])
+    {
+      Stage st;
+      const std::string loaded_id = s["id"].as<std::string>();
+      st.id = loaded_id;
+      st.kind = s["kind"].as<std::string>();
+      st.moving = s["moving"] ? s["moving"].as<std::string>() : "";
+      st.logical = st.id;
+      if (st.kind == "joint_connection")
+      {
+        if (!s["status"] || s["status"].as<std::string>() != "PASS")
+        {
+          err = "refusing keypose stage " + st.id + " status=" +
+                (s["status"] ? s["status"].as<std::string>() : "missing");
+          return false;
+        }
+        st.not_cartesian = true;
+        st.seg.logical_segment = st.id;
+        st.seg.deployable = true;
+        if (s["joint_names"])
+          for (const auto& n : s["joint_names"])
+            st.seg.joint_names.push_back(n.as<std::string>());
+        yamlVec(s["start_joints"], st.seg.start_joints);
+        yamlVec(s["end_joints"], st.seg.end_joints);
+        for (const auto& p : s["points"])
+        {
+          fr_task_planner::TrajectoryPointRecord pt;
+          yamlVec(p["positions"], pt.positions);
+          if (p["velocities"])
+            yamlVec(p["velocities"], pt.velocities);
+          if (p["accelerations"])
+            yamlVec(p["accelerations"], pt.accelerations);
+          pt.sec = p["sec"] ? p["sec"].as<int>() : 0;
+          pt.nanosec = p["nanosec"] ? static_cast<uint32_t>(p["nanosec"].as<int>()) : 0;
+          st.seg.points.push_back(pt);
+        }
+        if (st.seg.points.empty())
+        {
+          err = "empty path " + st.id;
+          return false;
+        }
+        if (loaded_id == "b_pre_to_handover")
+          expected_b_handover_ = st.seg.end_joints;
+        if (loaded_id == "a_handover_to_home")
+          a_exit_points_ = st.seg.points;
+      }
+      stages_.push_back(std::move(st));
+      if (loaded_id == "gripper_close_b")
+      {
+        Stage confirm;
+        confirm.id = "physical_grasp_confirm_b";
+        confirm.kind = "confirm_b_grasp";
+        confirm.moving = "arm_b";
+        confirm.requires_b_grasp_confirm = true;
+        stages_.push_back(std::move(confirm));
+      }
+    }
+    RCLCPP_INFO(node_->get_logger(),
+                "KEYPOSE_V1 stages=%zu speed_scale=%.3f grasp_wait=%.3f handover_wait=%.3f file=%s",
+                stages_.size(), cfg_.trajectory_speed_scale, grasp_post_close_wait_sec_,
+                handover_release_delay_sec_, path.c_str());
+    printIndex();
+    return true;
   }
 
   bool buildStages(std::string& err)
@@ -988,6 +1124,174 @@ private:
     RCLCPP_INFO(node_->get_logger(), "gripper B %s: %s", grip_b_.c_str(), live_gb_ ? "available" : "offline");
   }
 
+  bool partOwnership(bool& on_a, bool& on_b, std::string& err)
+  {
+    on_a = false;
+    on_b = false;
+    auto client = node_->create_client<moveit_msgs::srv::GetPlanningScene>("/get_planning_scene");
+    if (!client->wait_for_service(std::chrono::seconds(2)))
+    {
+      err = "get_planning_scene unavailable";
+      return false;
+    }
+    auto req = std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();
+    req->components.components = moveit_msgs::msg::PlanningSceneComponents::ROBOT_STATE_ATTACHED_OBJECTS;
+    auto fut = client->async_send_request(req);
+    if (rclcpp::spin_until_future_complete(node_, fut, std::chrono::seconds(3)) !=
+        rclcpp::FutureReturnCode::SUCCESS)
+    {
+      err = "get_planning_scene timed out";
+      return false;
+    }
+    const auto resp = fut.get();
+    if (!resp)
+    {
+      err = "empty planning scene";
+      return false;
+    }
+    for (const auto& att : resp->scene.robot_state.attached_collision_objects)
+    {
+      if (att.object.id != "small_part")
+        continue;
+      if (att.object.operation == moveit_msgs::msg::CollisionObject::REMOVE)
+        continue;
+      if (att.link_name.find("arm_a_") == 0)
+        on_a = true;
+      if (att.link_name.find("arm_b_") == 0)
+        on_b = true;
+    }
+    return true;
+  }
+
+  bool exitPathClear(const JointSnapshot& live)
+  {
+    if (a_exit_points_.empty() || expected_b_handover_.size() != 6)
+      return false;
+    auto client = node_->create_client<moveit_msgs::srv::GetStateValidity>("/check_state_validity");
+    if (!client->wait_for_service(std::chrono::seconds(2)))
+      return false;
+    const auto live_b = named(live, kJb);
+    const int stride = std::max(1, static_cast<int>(a_exit_points_.size() / 12));
+    for (size_t i = 0; i < a_exit_points_.size(); i += static_cast<size_t>(stride))
+    {
+      auto req = std::make_shared<moveit_msgs::srv::GetStateValidity::Request>();
+      req->group_name = "arm_a";
+      req->robot_state.is_diff = false;
+      req->robot_state.joint_state.name = kJa;
+      req->robot_state.joint_state.name.insert(req->robot_state.joint_state.name.end(), kJb.begin(),
+                                               kJb.end());
+      req->robot_state.joint_state.position = a_exit_points_[i].positions;
+      req->robot_state.joint_state.position.insert(req->robot_state.joint_state.position.end(),
+                                                   live_b.begin(), live_b.end());
+      auto fut = client->async_send_request(req);
+      if (rclcpp::spin_until_future_complete(node_, fut, std::chrono::seconds(2)) !=
+          rclcpp::FutureReturnCode::SUCCESS)
+        return false;
+      const auto resp = fut.get();
+      if (!resp || !resp->valid)
+        return false;
+    }
+    return true;
+  }
+
+  bool aExitReady(const JointSnapshot& live)
+  {
+    fr_task_planner::KeyposeExitGate gate;
+    gate.feedback_fresh = live.age_sec <= max_joint_age_sec_;
+    gate.b_close_finished = b_close_success_;
+    gate.handover_confirmed = physical_b_grasp_;
+    gate.a_open = handover_a_opened_;
+    if (expected_b_handover_.size() == 6)
+    {
+      const auto chk = checkDual(live, kJb, expected_b_handover_, cfg_.segment_start_tolerance_rad,
+                                 "B_NOT_AT_HANDOVER");
+      gate.b_at_handover = chk.ok;
+    }
+    std::string scene_err;
+    if (!partOwnership(gate.part_on_a, gate.part_on_b, scene_err))
+    {
+      RCLCPP_ERROR(node_->get_logger(), "a_handover_to_home scene check failed: %s", scene_err.c_str());
+      return false;
+    }
+    gate.exit_path_clear = exitPathClear(live);
+    const std::string why = fr_task_planner::keyposeExitGateError(gate);
+    if (!why.empty())
+    {
+      RCLCPP_ERROR(node_->get_logger(), "a_handover_to_home refused: %s", why.c_str());
+      return false;
+    }
+    RCLCPP_INFO(node_->get_logger(),
+                "a_handover_to_home gate PASS: B at handover, close+confirm done, A open, part on B");
+    return true;
+  }
+
+  bool attachPartToB()
+  {
+    if (keypose_dir_.empty())
+    {
+      RCLCPP_ERROR(node_->get_logger(), "keypose_dir missing; cannot attach part to B");
+      return false;
+    }
+    YAML::Node tgt;
+    try
+    {
+      tgt = YAML::LoadFile(keypose_dir_ + "/task_space_targets.yaml");
+    }
+    catch (const std::exception& e)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "grasp pose load failed: %s", e.what());
+      return false;
+    }
+    const auto pose = tgt["T_tcpB_object"]["pose"];
+    moveit_msgs::msg::AttachedCollisionObject att;
+    att.link_name = "arm_b_gripper_tcp";
+    att.touch_links = {"arm_b_gripper_base_link", "arm_b_finger_l", "arm_b_finger_r", "arm_b_gripper_tcp"};
+    att.object.id = "small_part";
+    att.object.header.frame_id = att.link_name;
+    att.object.operation = moveit_msgs::msg::CollisionObject::ADD;
+    att.object.primitives.resize(1);
+    att.object.primitives[0].type = shape_msgs::msg::SolidPrimitive::CYLINDER;
+    att.object.primitives[0].dimensions = {0.035, 0.0075};
+    geometry_msgs::msg::Pose p;
+    p.position.x = pose["xyz"][0].as<double>();
+    p.position.y = pose["xyz"][1].as<double>();
+    p.position.z = pose["xyz"][2].as<double>();
+    p.orientation.x = pose["xyzw"][0].as<double>();
+    p.orientation.y = pose["xyzw"][1].as<double>();
+    p.orientation.z = pose["xyzw"][2].as<double>();
+    p.orientation.w = pose["xyzw"][3].as<double>();
+    att.object.primitive_poses.push_back(p);
+    moveit_msgs::msg::AttachedCollisionObject drop_a;
+    drop_a.link_name = "arm_a_gripper_tcp";
+    drop_a.object.id = "small_part";
+    drop_a.object.operation = moveit_msgs::msg::CollisionObject::REMOVE;
+    auto client = node_->create_client<moveit_msgs::srv::ApplyPlanningScene>("/apply_planning_scene");
+    if (!client->wait_for_service(std::chrono::seconds(2)))
+    {
+      RCLCPP_ERROR(node_->get_logger(), "apply_planning_scene unavailable; part stays unassigned");
+      return false;
+    }
+    auto req = std::make_shared<moveit_msgs::srv::ApplyPlanningScene::Request>();
+    req->scene.is_diff = true;
+    req->scene.robot_state.is_diff = true;
+    req->scene.robot_state.attached_collision_objects = {drop_a, att};
+    auto fut = client->async_send_request(req);
+    if (rclcpp::spin_until_future_complete(node_, fut, std::chrono::seconds(3)) !=
+        rclcpp::FutureReturnCode::SUCCESS)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "apply_planning_scene timed out");
+      return false;
+    }
+    const auto resp = fut.get();
+    if (!resp || !resp->success)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "apply_planning_scene rejected the B attachment");
+      return false;
+    }
+    RCLCPP_INFO(node_->get_logger(), "planning scene: small_part attached to arm_b_gripper_tcp");
+    return true;
+  }
+
   bool runStage(Stage& st, bool motion)
   {
     RCLCPP_INFO(node_->get_logger(), "----- STAGE %s kind=%s moving=%s -----", st.id.c_str(),
@@ -1019,8 +1323,9 @@ private:
         {
           RCLCPP_INFO(node_->get_logger(),
                       "dry-run: would pause for operator confirm via "
-                      "ros2 service call /dual7_real_task_executor/confirm_b_grasp "
-                      "std_srvs/srv/SetBool \"{data: true}\"; not auto-confirming");
+                      "ros2 service call /%s/confirm_b_grasp "
+                      "std_srvs/srv/SetBool \"{data: true}\"; not auto-confirming",
+                      node_->get_name());
         }
         if (inject_failure_ == "B_GRASP_UNCONFIRMED" || inject_failure_ == "USER_CANCEL")
         {
@@ -1067,6 +1372,13 @@ private:
                      "refusing attachment_transfer without runtime B grasp confirm");
         return false;
       }
+      if (!handover_a_opened_)
+      {
+        RCLCPP_ERROR(node_->get_logger(), "refusing attachment_transfer before A has opened");
+        return false;
+      }
+      if (!attachPartToB())
+        return false;
       owner_logic_ = "B";
       return true;
     }
@@ -1091,6 +1403,10 @@ private:
       RCLCPP_ERROR(node_->get_logger(), "scale failed: %s", scaled.error.c_str());
       return false;
     }
+    RCLCPP_INFO(node_->get_logger(),
+                "EFFECTIVE_SPEED_SCALE=%.3f original_s=%.3f scaled_s=%.3f",
+                cfg_.trajectory_speed_scale, segmentDuration(st.seg),
+                segmentDuration(scaled.segment));
     RCLCPP_INFO(node_->get_logger(), "points=%zu original=%.3f s scaled=%.3f s start=%s end=%s",
                 scaled.segment.points.size(), segmentDuration(st.seg),
                 segmentDuration(scaled.segment), fmt(st.seg.start_joints).c_str(),
@@ -1192,12 +1508,143 @@ private:
       RCLCPP_ERROR(node_->get_logger(), "inject_failure=TRAJ_TIMEOUT");
       return false;
     }
+    if (st.id == "a_handover_to_home" && !aExitReady(*live))
+      return false;
     if (!sendTraj(st.moving, scaled.segment))
       return false;
     if (!waitEnd(st.moving, names, scaled.segment.end_joints))
       return false;
     applyPredEnd(st, scaled.segment.end_joints);
     return true;
+  }
+
+  bool sceneHasAttachedPart(bool& attached, std::string& err)
+  {
+    attached = false;
+    auto client = node_->create_client<moveit_msgs::srv::GetPlanningScene>("/get_planning_scene");
+    if (!client->wait_for_service(std::chrono::seconds(2)))
+    {
+      err = "get_planning_scene unavailable";
+      return false;
+    }
+    auto req = std::make_shared<moveit_msgs::srv::GetPlanningScene::Request>();
+    req->components.components = moveit_msgs::msg::PlanningSceneComponents::ROBOT_STATE_ATTACHED_OBJECTS;
+    auto fut = client->async_send_request(req);
+    if (rclcpp::spin_until_future_complete(node_, fut, std::chrono::seconds(3)) !=
+        rclcpp::FutureReturnCode::SUCCESS)
+    {
+      err = "get_planning_scene timed out";
+      return false;
+    }
+    const auto resp = fut.get();
+    attached = resp && !resp->scene.robot_state.attached_collision_objects.empty();
+    return true;
+  }
+
+  bool directHomeFree(const std::string& group, const std::vector<std::string>& names,
+                      const std::vector<double>& live_a, const std::vector<double>& live_b,
+                      const std::vector<double>& goal, std::string& block)
+  {
+    auto client = node_->create_client<moveit_msgs::srv::GetStateValidity>("/check_state_validity");
+    if (!client->wait_for_service(std::chrono::seconds(2)))
+    {
+      block = "check_state_validity unavailable";
+      return false;
+    }
+    const std::vector<double>& from = (group == "arm_b") ? live_b : live_a;
+    double jump = 0.0;
+    for (size_t i = 0; i < from.size() && i < goal.size(); ++i)
+      jump = std::max(jump, std::abs(goal[i] - from[i]));
+    const int n = std::max(1, static_cast<int>(std::ceil(jump / 0.02)));
+    for (int s = 0; s <= n; ++s)
+    {
+      const double t = static_cast<double>(s) / static_cast<double>(n);
+      std::vector<double> qa = live_a;
+      std::vector<double> qb = live_b;
+      auto& moving = (group == "arm_b") ? qb : qa;
+      for (size_t i = 0; i < moving.size() && i < goal.size(); ++i)
+        moving[i] = from[i] + (goal[i] - from[i]) * t;
+      auto req = std::make_shared<moveit_msgs::srv::GetStateValidity::Request>();
+      req->group_name = group;
+      req->robot_state.is_diff = false;
+      req->robot_state.joint_state.name = kJa;
+      req->robot_state.joint_state.name.insert(req->robot_state.joint_state.name.end(), kJb.begin(),
+                                               kJb.end());
+      req->robot_state.joint_state.position = qa;
+      req->robot_state.joint_state.position.insert(req->robot_state.joint_state.position.end(),
+                                                   qb.begin(), qb.end());
+      auto fut = client->async_send_request(req);
+      if (rclcpp::spin_until_future_complete(node_, fut, std::chrono::seconds(2)) !=
+          rclcpp::FutureReturnCode::SUCCESS)
+      {
+        block = "check_state_validity timed out";
+        return false;
+      }
+      const auto resp = fut.get();
+      if (!resp || !resp->valid)
+      {
+        block = "direct collision";
+        if (resp && !resp->contacts.empty())
+          block = resp->contacts.front().contact_body_1 + " <-> " + resp->contacts.front().contact_body_2;
+        return false;
+      }
+    }
+    (void)names;
+    return true;
+  }
+
+  bool fillDirectHome(const std::vector<std::string>& names, const std::vector<double>& from,
+                      const std::vector<double>& goal, TrajectorySegmentRecord& out)
+  {
+    out.joint_names = names;
+    out.points.clear();
+    double jump = 0.0;
+    for (size_t i = 0; i < from.size() && i < goal.size(); ++i)
+      jump = std::max(jump, std::abs(goal[i] - from[i]));
+    const int n = std::max(1, static_cast<int>(std::ceil(jump / 0.02)));
+    double tsec = 0.0;
+    std::vector<double> prev = from;
+    for (int s = 0; s <= n; ++s)
+    {
+      const double u = static_cast<double>(s) / static_cast<double>(n);
+      fr_task_planner::TrajectoryPointRecord pt;
+      pt.positions.resize(from.size());
+      for (size_t i = 0; i < from.size() && i < goal.size(); ++i)
+        pt.positions[i] = from[i] + (goal[i] - from[i]) * u;
+      if (s > 0)
+      {
+        double step = 0.0;
+        for (size_t i = 0; i < pt.positions.size(); ++i)
+          step = std::max(step, std::abs(pt.positions[i] - prev[i]));
+        tsec += std::max(step / 1.0, 0.02);
+      }
+      pt.sec = static_cast<int32_t>(tsec);
+      pt.nanosec = static_cast<uint32_t>((tsec - pt.sec) * 1e9);
+      out.points.push_back(pt);
+      prev = pt.positions;
+    }
+    out.start_joints = from;
+    out.end_joints = goal;
+    out.deployable = true;
+    return true;
+  }
+
+  bool planCurrentToHome(const std::string& group, const std::vector<std::string>& names,
+                         const std::vector<double>& live_a, const std::vector<double>& live_b,
+                         const std::vector<double>& goal, TrajectorySegmentRecord& out, std::string& err)
+  {
+    std::string block;
+    if (directHomeFree(group, names, live_a, live_b, goal, block))
+    {
+      RCLCPP_INFO(node_->get_logger(), "%s Current→Home direct joint path is collision-free",
+                  group.c_str());
+      const auto& from = (group == "arm_b") ? live_b : live_a;
+      return fillDirectHome(names, from, goal, out);
+    }
+    RCLCPP_INFO(node_->get_logger(),
+                "%s Current→Home direct blocked (%s); using existing move_group RRTConnect",
+                group.c_str(), block.c_str());
+    return planArmHome(group, names, live_a, live_b, goal, out, err);
   }
 
   bool runDualHome(const Stage& st, bool motion)
@@ -1247,6 +1694,27 @@ private:
       RCLCPP_ERROR(node_->get_logger(),
                    "MOCK_ZERO_NOT_REAL_START: live A/B look like zeros; refusing Home plan");
       return false;
+    }
+    if (motion && task_mode_ == "keypose_v1")
+    {
+      bool attached = false;
+      std::string scene_err;
+      if (!sceneHasAttachedPart(attached, scene_err))
+      {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "Current→Home cannot see the planning scene (%s). Not assuming the grippers "
+                     "are empty and not moving.",
+                     scene_err.c_str());
+        return false;
+      }
+      if (attached)
+      {
+        RCLCPP_ERROR(node_->get_logger(),
+                     "Planning scene has an attached part. Refusing Current→Home and refusing to "
+                     "open either gripper. Confirm the part on site; this program will not assume "
+                     "the arms are empty.");
+        return false;
+      }
     }
     const auto at_a = checkDual(*s, kJa, home_a_, cfg_.home_tolerance_rad, "NOT_AT_HOME_A");
     const auto at_b = checkDual(*s, kJb, home_b_, cfg_.home_tolerance_rad, "NOT_AT_HOME_B");
@@ -1298,7 +1766,7 @@ private:
       TrajectorySegmentRecord seg;
       std::string err;
       RCLCPP_INFO(node_->get_logger(), "planning Arm A Current→Home with Arm B held at live");
-      if (!planArmHome("arm_a", kJa, live_a, live_b, home_a_, seg, err))
+      if (!planCurrentToHome("arm_a", kJa, live_a, live_b, home_a_, seg, err))
       {
         RCLCPP_ERROR(node_->get_logger(), "Arm A Current→Home plan failed: %s", err.c_str());
         return false;
@@ -1310,6 +1778,8 @@ private:
         RCLCPP_ERROR(node_->get_logger(), "Arm A Home scale failed: %s", scaled.error.c_str());
         return false;
       }
+      RCLCPP_INFO(node_->get_logger(), "EFFECTIVE_SPEED_SCALE=%.3f Current→Home arm_a",
+                  cfg_.trajectory_speed_scale);
       if (!sendTraj("arm_a", scaled.segment))
         return false;
       if (!waitEnd("arm_a", kJa, home_a_))
@@ -1326,7 +1796,7 @@ private:
       TrajectorySegmentRecord seg;
       std::string err;
       RCLCPP_INFO(node_->get_logger(), "planning Arm B Current→Home with Arm A held at Home");
-      if (!planArmHome("arm_b", kJb, live_a, live_b, home_b_, seg, err))
+      if (!planCurrentToHome("arm_b", kJb, live_a, live_b, home_b_, seg, err))
       {
         RCLCPP_ERROR(node_->get_logger(), "Arm B Current→Home plan failed: %s", err.c_str());
         return false;
@@ -1338,6 +1808,8 @@ private:
         RCLCPP_ERROR(node_->get_logger(), "Arm B Home scale failed: %s", scaled.error.c_str());
         return false;
       }
+      RCLCPP_INFO(node_->get_logger(), "EFFECTIVE_SPEED_SCALE=%.3f Current→Home arm_b",
+                  cfg_.trajectory_speed_scale);
       if (!sendTraj("arm_b", scaled.segment))
         return false;
       if (!waitEnd("arm_b", kJb, home_b_))
@@ -1369,8 +1841,8 @@ private:
     g.request.group_name = group;
     g.request.num_planning_attempts = 5;
     g.request.allowed_planning_time = 10.0;
-    g.request.max_velocity_scaling_factor = 0.2;
-    g.request.max_acceleration_scaling_factor = 0.2;
+    g.request.max_velocity_scaling_factor = home_plan_velocity_scale_;
+    g.request.max_acceleration_scaling_factor = home_plan_velocity_scale_;
     g.request.start_state.is_diff = false;
     g.request.start_state.joint_state.name = kJa;
     g.request.start_state.joint_state.name.insert(g.request.start_state.joint_state.name.end(),
@@ -1544,6 +2016,17 @@ private:
                 "service_available=%s (not ping, not activate, not motion-done)",
                 st.id.c_str(), arm_b ? "B" : "A", service.c_str(), st.kind.c_str(),
                 (arm_b ? live_gb_ : live_ga_) ? "YES" : "NO");
+    if (motion && task_mode_ == "keypose_v1" &&
+        empty_gripper_confirmation_ != "I_CONFIRM_BOTH_GRIPPERS_ARE_EMPTY")
+    {
+      RCLCPP_ERROR(node_->get_logger(),
+                   "STOP before gripper %s. Current→Home does not open grippers. KEYPOSE_V1 will "
+                   "not assume the arms are empty. Relaunch with "
+                   "empty_gripper_confirmation:=I_CONFIRM_BOTH_GRIPPERS_ARE_EMPTY after you "
+                   "confirm both grippers hold nothing.",
+                   st.id.c_str());
+      return false;
+    }
     if (inject_failure_ == "GRIPPER_FAIL")
     {
       RCLCPP_ERROR(node_->get_logger(), "inject_failure=GRIPPER_FAIL at %s", st.id.c_str());
@@ -1580,13 +2063,21 @@ private:
     {
       RCLCPP_INFO(node_->get_logger(), "DRY-RUN GRIPPER %s arm=%s service=%s SENT=NO",
                   close ? "CLOSE" : "OPEN", arm_b ? "B" : "A", service.c_str());
+      if (close && !arm_b && grasp_post_close_wait_sec_ >= 0.0)
+        RCLCPP_INFO(node_->get_logger(),
+                    "DRY-RUN grasp_post_close_wait_sec=%.3f starts after close success, not in parallel",
+                    grasp_post_close_wait_sec_);
+      if (close && arm_b && handover_post_close_wait_sec_ >= 0.0)
+        RCLCPP_INFO(node_->get_logger(),
+                    "DRY-RUN handover_post_close_wait_sec=%.3f starts after B close success",
+                    handover_post_close_wait_sec_);
       if (close && !arm_b)
         owner_logic_ = "A";
       if (!close && !arm_b)
         owner_logic_ = physical_b_grasp_ ? "B" : "A";
       return true;
     }
-    if (st.kind == "gripper_open" && !arm_b && !physical_b_grasp_)
+    if (st.kind == "gripper_open" && !arm_b && !physical_b_grasp_ && st.id != "gripper_open_a_startup")
     {
       RCLCPP_ERROR(node_->get_logger(),
                    "refusing gripper_open_a without runtime B grasp confirm; A keeps the part");
@@ -1615,10 +2106,33 @@ private:
         return false;
       }
       b_close_success_ = true;
-      RCLCPP_INFO(node_->get_logger(), "B_GRIPPER_CLOSE_SUCCESS");
+      RCLCPP_INFO(node_->get_logger(),
+                  "B_GRIPPER_CLOSE_SUCCESS. This is command completion, not physical hold.");
+      if (task_mode_ == "keypose_v1" && handover_post_close_wait_sec_ >= 0.0)
+      {
+        RCLCPP_INFO(node_->get_logger(),
+                    "B close finished; waiting handover_post_close_wait_sec=%.3f before confirmation. "
+                    "physical_b_grasp stays false.",
+                    handover_post_close_wait_sec_);
+        rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double>(handover_post_close_wait_sec_)));
+        handover_wait_done_ = true;
+      }
     }
     if (close && !arm_b)
+    {
       owner_logic_ = "A";
+      if (grasp_post_close_wait_sec_ >= 0.0)
+      {
+        RCLCPP_INFO(node_->get_logger(),
+                    "grasp close finished; waiting grasp_post_close_wait_sec=%.3f before lift",
+                    grasp_post_close_wait_sec_);
+        rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::duration<double>(grasp_post_close_wait_sec_)));
+      }
+    }
+    if (!close && !arm_b && st.id == "gripper_open_a")
+      handover_a_opened_ = true;
     if (!close && !arm_b && physical_b_grasp_)
       owner_logic_ = "B";
     return true;
@@ -1913,6 +2427,14 @@ private:
                    b_close_success_ ? "YES" : "NO", servoj_block_b_ ? "YES" : "NO");
       return false;
     }
+    if (handover_wait_done_)
+    {
+      RCLCPP_INFO(node_->get_logger(),
+                  "handover wait already completed after B close; not treating close itself as hold");
+      physical_b_grasp_ = true;
+      RCLCPP_INFO(node_->get_logger(), "ARM_A_RELEASE_ALLOWED");
+      return true;
+    }
     RCLCPP_INFO(node_->get_logger(), "AUTO HANDOVER MODE");
     RCLCPP_INFO(node_->get_logger(), "Waiting %.3f sec before Arm A release",
                 handover_release_delay_sec_);
@@ -1954,11 +2476,13 @@ private:
     RCLCPP_INFO(node_->get_logger(),
                 "WAITING for operator B-grasp confirm. A will NOT open until confirmed.");
     RCLCPP_INFO(node_->get_logger(),
-                "Confirm:  ros2 service call /dual7_real_task_executor/confirm_b_grasp "
-                "std_srvs/srv/SetBool \"{data: true}\"");
+                "Confirm:  ros2 service call /%s/confirm_b_grasp "
+                "std_srvs/srv/SetBool \"{data: true}\"",
+                node_->get_name());
     RCLCPP_INFO(node_->get_logger(),
-                "Reject:   ros2 service call /dual7_real_task_executor/confirm_b_grasp "
-                "std_srvs/srv/SetBool \"{data: false}\"");
+                "Reject:   ros2 service call /%s/confirm_b_grasp "
+                "std_srvs/srv/SetBool \"{data: false}\"",
+                node_->get_name());
     const auto t0 = std::chrono::steady_clock::now();
     while (rclcpp::ok())
     {
@@ -2009,11 +2533,20 @@ private:
   bool continue_after_home_ = false;
   bool simultaneous_home_ = false;
   bool plan_home_ = false;
+  double home_plan_velocity_scale_ = 0.2;
+  std::string empty_gripper_confirmation_;
+  std::string keypose_dir_;
+  std::vector<double> expected_b_handover_;
+  std::vector<fr_task_planner::TrajectoryPointRecord> a_exit_points_;
+  bool handover_wait_done_ = false;
+  bool handover_a_opened_ = false;
   bool confirm_approach_ = false;
   bool confirm_grasp_b_ = false;
   bool auto_handover_release_ = false;
   bool b_close_success_ = false;
   double handover_release_delay_sec_ = 2.0;
+  double grasp_post_close_wait_sec_ = -1.0;
+  double handover_post_close_wait_sec_ = -1.0;
   bool already_act_a_ = false;
   bool already_act_b_ = false;
   bool activated_a_ = false;
