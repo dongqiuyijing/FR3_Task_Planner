@@ -636,7 +636,7 @@ private:
     grip_a_ = getString(node_, "arm_a_gripper_service_name", "/arm_a/fairino_gripper/command");
     grip_b_ = getString(node_, "arm_b_gripper_service_name", "/arm_b/fairino_gripper/command");
     group_a_ = getString(node_, "arm_a_planning_group", "arm_a");
-    vmax_ = getDouble(node_, "conservative_joint_vmax_rad_s", 0.20);
+    vmax_ = getDouble(node_, "conservative_joint_vmax_rad_s", 0.3);
     use_sim_time_ = getBool(node_, "use_sim_time", false);
     cfg_.planning_group = group_a_;
     const int motion_ms = std::max(cfg_.gripper_max_time_ms, 1000);
