@@ -2093,6 +2093,8 @@ private:
       return false;
     }
     auto fields = close ? makeGripperCloseRequest(cfg_) : makeGripperOpenRequest(cfg_);
+    if (close && task_mode_ == "keypose_v1")
+      fr_task_planner::applyKeyposeCloseEffort(fields.velocity, fields.force);
     if (!callGripper(arm_b, fields, close ? "REAL_GRIPPER_CLOSE_FAILED" : "REAL_GRIPPER_OPEN_FAILED",
                      "move"))
       return false;

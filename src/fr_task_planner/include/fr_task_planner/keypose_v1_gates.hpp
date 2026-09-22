@@ -17,6 +17,12 @@ struct KeyposeExitGate
   bool exit_path_clear = false;
 };
 
+inline void applyKeyposeCloseEffort(int& velocity, int& force)
+{
+  velocity = 50;
+  force = 50;
+}
+
 inline std::string keyposeExitGateError(const KeyposeExitGate& gate)
 {
   if (!gate.feedback_fresh)

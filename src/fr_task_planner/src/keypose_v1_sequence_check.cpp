@@ -118,6 +118,14 @@ int main()
   ok.exit_path_clear = false;
   seq_expect(!fr_task_planner::keyposeExitGateError(ok).empty(), "colliding exit path blocks motion");
 
+  int close_velocity = 20;
+  int close_force = 20;
+  int open_velocity = 20;
+  int open_force = 20;
+  fr_task_planner::applyKeyposeCloseEffort(close_velocity, close_force);
+  seq_expect(close_velocity == 50 && close_force == 50, "keypose A/B close request is 50/50");
+  seq_expect(open_velocity == 20 && open_force == 20, "keypose open request stays 20/20");
+
   std::cout << (sequence_fails == 0 ? "EXECUTION_SEQUENCE_PASS" : "EXECUTION_SEQUENCE_FAIL") << std::endl;
   return (chain_fails + sequence_fails) == 0 ? 0 : 1;
 }
