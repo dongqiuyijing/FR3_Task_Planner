@@ -1,0 +1,41 @@
+task_version: KEYPOSE_V1
+execution: false
+frozen_source_untouched: false
+frame: world
+units: m
+arm_b_handover_offset_world: [0.000000000000, -0.006000000000, -0.010000000000]
+overall: PASS
+ik: PASS
+fk_ik_pos_err_m: 0.000000034883
+fk_ik_ori_err_deg: 0.000000000000
+offset_check: PASS
+measured_delta_world_m: [-0.000000006103, -0.006000032624, -0.010000010735]
+measured_delta_world_mm: [-0.000006103096, -6.000032624194, -10.000010735496]
+orientation_change_deg: 0.000000000000
+a_handover_unchanged: true
+old_B_HANDOVER_joints: [1.018942414936, -0.838801221711, 1.754164739795, -2.486163518247, -1.570792654670, -0.551856709803]
+new_B_HANDOVER_joints: [1.044598836525, -0.840489042245, 1.758012695430, -2.488323653321, -1.570792654675, -0.526200288214]
+A_HANDOVER_joints: [-2.589739840717, -2.326051961796, -1.755861867870, -0.630471470214, 1.570792671382, -2.589736167442]
+old_B_HANDOVER_tcp:
+  xyz: [-0.007999747765, 0.399999767356, 0.900000016192]
+  xyzw: [0.707106780834, -0.000000309299, 0.707106781539, -0.000000309595]
+new_B_HANDOVER_tcp:
+  xyz: [-0.007999753868, 0.393999734732, 0.890000005457]
+  xyzw: [0.707106780834, -0.000000309299, 0.707106781539, -0.000000309595]
+A_HANDOVER_tcp:
+  xyz: [-0.000000499049, 0.399999202468, 0.899999693192]
+  xyzw: [-0.499999998927, -0.499999993271, 0.500000001114, 0.500000006687]
+collision:
+  dual_pose_part_on_A_B_approach: PASS
+  dual_pose_part_on_B: PASS
+  b_pre_to_handover: PASS
+  b_pre_to_handover_method: joint_direct
+  b_pre_to_handover_block: ""
+  b_handover_to_face4: PASS
+  b_handover_to_face4_method: joint_direct
+  b_handover_to_face4_block: ""
+  existing_a_handover_to_home: PASS
+  existing_a_handover_to_home_note: ""
+unaffected_kept: [A_HANDOVER, A trajectories, Home, face keyposes, gripper params, waits, ServoJ]
+affected_replanned: [b_pre_to_handover, b_handover_to_face4]
+candidate_trajectory: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_v1_six_face_trajectory_b_handover_offset.yaml

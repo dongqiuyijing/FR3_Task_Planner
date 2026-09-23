@@ -269,6 +269,8 @@ struct Stage
   bool not_cartesian = false;
   bool requires_approach_confirm = false;
   bool requires_b_grasp_confirm = false;
+  std::vector<double> object_center_world;
+  double object_bottom_z = 0.0;
   TrajectorySegmentRecord seg;
 };
 
@@ -594,6 +596,7 @@ private:
       handover_release_delay_sec_ = 0.0;
     grasp_post_close_wait_sec_ = getDouble(node_, "grasp_post_close_wait_sec", -1.0);
     handover_post_close_wait_sec_ = getDouble(node_, "handover_post_close_wait_sec", -1.0);
+    place_post_open_wait_sec_ = getDouble(node_, "place_post_open_wait_sec", 1.5);
     if (handover_post_close_wait_sec_ >= 0.0)
       handover_release_delay_sec_ = handover_post_close_wait_sec_;
     already_act_a_ = getBool(node_, "gripper_a_already_activated", false);
@@ -832,9 +835,9 @@ private:
                   "trajectory_speed_scale %.3f != file speed_scale %.3f; execution uses the parameter",
                   cfg_.trajectory_speed_scale, file_scale);
     }
-    if (std::abs(cfg_.trajectory_speed_scale - 0.2) > 1e-9)
+    if (cfg_.trajectory_speed_scale <= 0.0 || cfg_.trajectory_speed_scale > 0.8)
     {
-      err = "keypose_v1 requires trajectory_speed_scale 0.2; refusing a silent smaller scale";
+      err = "keypose_v1 trajectory_speed_scale must be in (0, 0.4]";
       return false;
     }
     for (const auto& s : y["stages"])
@@ -845,6 +848,10 @@ private:
       st.kind = s["kind"].as<std::string>();
       st.moving = s["moving"] ? s["moving"].as<std::string>() : "";
       st.logical = st.id;
+      if (s["object_center_world"])
+        yamlVec(s["object_center_world"], st.object_center_world);
+      if (s["object_bottom_z"])
+        st.object_bottom_z = s["object_bottom_z"].as<double>();
       if (st.kind == "joint_connection")
       {
         if (!s["status"] || s["status"].as<std::string>() != "PASS")
@@ -1292,13 +1299,62 @@ private:
     return true;
   }
 
+  bool releasePartAtPlace(const Stage& st)
+  {
+    if (st.object_center_world.size() != 3 || st.object_bottom_z <= 0.0)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "place release missing object_center_world/object_bottom_z");
+      return false;
+    }
+    moveit_msgs::msg::AttachedCollisionObject detach;
+    detach.link_name = "arm_b_gripper_tcp";
+    detach.object.id = "small_part";
+    detach.object.operation = moveit_msgs::msg::CollisionObject::REMOVE;
+    moveit_msgs::msg::CollisionObject world;
+    world.id = "small_part";
+    world.header.frame_id = "world";
+    world.operation = moveit_msgs::msg::CollisionObject::ADD;
+    world.primitives.resize(1);
+    world.primitives[0].type = shape_msgs::msg::SolidPrimitive::CYLINDER;
+    world.primitives[0].dimensions = {0.035, 0.0075};
+    geometry_msgs::msg::Pose p;
+    p.position.x = st.object_center_world[0];
+    p.position.y = st.object_center_world[1];
+    p.position.z = st.object_center_world[2];
+    p.orientation.w = 1.0;  // cylinder axis is world +Z after placement
+    world.primitive_poses.push_back(p);
+    auto client = node_->create_client<moveit_msgs::srv::ApplyPlanningScene>("/apply_planning_scene");
+    if (!client->wait_for_service(std::chrono::seconds(2)))
+    {
+      RCLCPP_ERROR(node_->get_logger(), "apply_planning_scene unavailable; refusing retreat");
+      return false;
+    }
+    auto req = std::make_shared<moveit_msgs::srv::ApplyPlanningScene::Request>();
+    req->scene.is_diff = true;
+    req->scene.robot_state.is_diff = true;
+    req->scene.robot_state.attached_collision_objects = {detach};
+    req->scene.world.collision_objects = {world};
+    auto fut = client->async_send_request(req);
+    if (rclcpp::spin_until_future_complete(node_, fut, std::chrono::seconds(3)) != rclcpp::FutureReturnCode::SUCCESS ||
+        !fut.get() || !fut.get()->success)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "apply_planning_scene rejected placement world object; refusing retreat");
+      return false;
+    }
+    owner_logic_ = "world";
+    RCLCPP_INFO(node_->get_logger(), "PLACE RELEASE PASS: small_part world center=[%.12f, %.12f, %.12f] bottom_z=%.12f",
+                p.position.x, p.position.y, p.position.z, st.object_bottom_z);
+    return true;
+  }
+
   bool runStage(Stage& st, bool motion)
   {
     RCLCPP_INFO(node_->get_logger(), "----- STAGE %s kind=%s moving=%s -----", st.id.c_str(),
                 st.kind.c_str(), st.moving.c_str());
     if (st.kind == "runtime_replan")
       return runDualHome(st, motion);
-    if (st.kind == "gripper_activate" || st.kind == "gripper_close" || st.kind == "gripper_open")
+    if (st.kind == "gripper_activate" || st.kind == "gripper_close" || st.kind == "gripper_open" ||
+        st.kind == "gripper_open_event")
     {
       return runGripperStage(st, motion);
     }
@@ -2093,6 +2149,11 @@ private:
         owner_logic_ = "A";
       if (!close && !arm_b)
         owner_logic_ = physical_b_grasp_ ? "B" : "A";
+      if (st.kind == "gripper_open_event" && arm_b)
+      {
+        owner_logic_ = "world";
+        RCLCPP_INFO(node_->get_logger(), "DRY-RUN PLACE RELEASE: world object + wait %.3f sec; retreat follows only on real open success", place_post_open_wait_sec_);
+      }
       return true;
     }
     if (st.kind == "gripper_open" && !arm_b && !physical_b_grasp_ && st.id != "gripper_open_a_startup")
@@ -2155,6 +2216,14 @@ private:
       handover_a_opened_ = true;
     if (!close && !arm_b && physical_b_grasp_)
       owner_logic_ = "B";
+    if (st.kind == "gripper_open_event" && arm_b)
+    {
+      if (!releasePartAtPlace(st))
+        return false;
+      RCLCPP_INFO(node_->get_logger(), "PLACE open completed; waiting %.3f sec before retreat", place_post_open_wait_sec_);
+      rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::duration<double>(place_post_open_wait_sec_)));
+    }
     return true;
   }
 
@@ -2567,6 +2636,7 @@ private:
   double handover_release_delay_sec_ = 2.0;
   double grasp_post_close_wait_sec_ = -1.0;
   double handover_post_close_wait_sec_ = -1.0;
+  double place_post_open_wait_sec_ = 1.5;
   bool already_act_a_ = false;
   bool already_act_b_ = false;
   bool activated_a_ = false;

@@ -1,0 +1,59 @@
+# Offline-only candidate for the post-B_FACE6 placement extension.
+# This file is deliberately NOT referenced by keypose_v1_executor.launch.py or
+# keypose_v1_six_face_trajectory.yaml.
+task_version: KEYPOSE_V1_B_PLACE_CANDIDATE
+execution: false
+source_frozen_trajectory: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_v1_six_face_trajectory.yaml
+source_frozen_trajectory_modified: false
+frame: world
+units: m
+
+object:
+  id: small_part
+  collision_geometry: cylinder
+  radius_m: 0.0075
+  axial_length_m: 0.035
+  attachment: T_tcpB_object
+  attachment_pose_tcp_frame:
+    xyz: [0.0, 0.0, 0.008]
+    xyzw: [0.0, 0.0, -0.707107218813, 0.707106343559]
+
+requested_place:
+  center: [-0.350, 0.400, 0.7675]
+  bottom_z: 0.750
+  table_top_z: 0.750
+  vertical_axis_world: +Z
+
+# For the vertical orientation with object +Z aligned to world +Z:
+# T_world_tcpB = T_world_object * inverse(T_tcpB_object).
+computed_tcp_at_requested_center:
+  xyz: [-0.350, 0.400, 0.7595]
+  xyzw: [1.0, 0.0, 0.0, 0.0]
+
+geometry_gate:
+  status: BLOCKED
+  requested_center_bottom_z_m: 0.7500
+  requested_table_top_z_m: 0.7500
+  penetration_m: 0.0
+  reason: >-
+    Existing small_part collision geometry is a 35 mm cylinder. A vertical
+    center at Z=0.7675 has its lower end at Z=0.750, at the table surface.
+  no_cartesian_or_joint_trajectory_generated: false
+  no_gripper_command_generated: true
+  no_planning_scene_collision_exemption_applied: true
+
+# These are alternatives for operator/engineering approval only; neither is
+# selected or used by this candidate.
+unselected_resolutions: {}
+
+future_tunable_motion_parameters:
+  pre_place_height_above_final_m: 0.100
+  retreat_height_above_final_m: 0.100
+  final_approach_speed_scale: 0.100
+  note: Parameters intentionally inactive until geometry_gate is PASS.
+
+required_future_stages:
+  - face6_to_pre_place
+  - pre_place_to_place
+  - gripper_open_b_place
+  - place_to_retreat

@@ -1,0 +1,38 @@
+task_version: KEYPOSE_V1_B_PLACE_GEOMETRY_GATE
+execution: false
+frame: world
+units: m
+result: BLOCKED
+frozen_six_face_trajectory_changed: false
+existing_attachment_source: task_space_targets.yaml:T_tcpB_object
+existing_collision_geometry_sources:
+  - search.yaml:object.height_m
+  - dual_handover.yaml:object.length_m
+  - dual7_real_task_executor.cpp:attachPartToB
+  - keypose_v1_b_handover_offset.cpp:addCylinder
+object_geometry:
+  shape: cylinder
+  radius_m: 0.0075
+  axial_length_m: 0.035
+requested_object_center: [-0.350, 0.400, 0.7675]
+requested_object_bottom_z_m: 0.750
+computed_bottom_z_from_existing_geometry_m: 0.7500
+bottom_error_mm: 0.0
+table_top_z_m: 0.750
+collision_result: EXPECTED_PART_TABLE_CONTACT_PENDING_PATH_VALIDATION
+fk_tcp_for_requested_center:
+  xyz: [-0.350, 0.400, 0.7595]
+  xyzw: [1.0, 0.0, 0.0, 0.0]
+tcp_calculation: T_world_tcpB_equals_T_world_object_times_inverse_T_tcpB_object
+ik_fk_cartesian_continuity_and_collision: NOT_RUN
+not_run_reason: >-
+  Planning a trajectory to a known penetrating endpoint would violate the
+  required collision gate. No table collision pair was globally disabled.
+planning_scene_release_behavior: NOT_IMPLEMENTED
+release_reason: >-
+  The release/retreat implementation is intentionally deferred: it must only
+  be attached after a collision-valid final object pose is approved.
+required_decision:
+  - Approve bottom_z=0.7475 while retaining requested center Z=0.765; or
+  - Approve center Z=0.7675 while retaining requested bottom_z=0.750; or
+  - Provide corrected existing part axial length and its approved collision geometry update.

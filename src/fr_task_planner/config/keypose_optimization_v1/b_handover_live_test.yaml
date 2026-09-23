@@ -1,0 +1,18 @@
+# Independent real-hardware B_HANDOVER alignment test. Default plan-only.
+execution: false
+arm_a_handover_joints: [-2.589739840717, -2.326051961796, -1.755861867870, -0.630471470214, 1.570792671382, -2.589736167442]
+arm_b_pre_handover_joints: [1.018940697148, -1.214870670667, 1.401150172209, -1.757079497313, -1.570792753708, -0.551858425983]
+arm_b_handover_joints: [1.044598836525, -0.840489042245, 1.758012695430, -2.488323653321, -1.570792654675, -0.526200288214]
+arm_b_handover_tcp_world_m: [-0.007999753868, 0.393999734732, 0.890000005457]
+arm_b_handover_offset_world_m: [0.0, -0.006, -0.010]
+planning_time_sec: 10.0
+planning_attempts: 5
+approach_velocity_scale: 0.10
+approach_acceleration_scale: 0.10
+target_tolerance_rad: 0.001
+start_tolerance_rad: 0.02
+settle_tolerance_rad: 0.02
+settle_timeout_sec: 10.0
+arm_a_trajectory_action: /arm_a_controller/follow_joint_trajectory
+arm_b_trajectory_action: /arm_b_controller/follow_joint_trajectory
+arm_b_gripper_service: /arm_b/fairino_gripper/command

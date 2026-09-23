@@ -12,12 +12,16 @@ from launch_ros.actions import Node
 def _setup(context, *args, **kwargs):
     execute = LaunchConfiguration("execute").perform(context).lower() == "true"
     home = os.path.expanduser("~")
-    traj = os.path.join(home, "fr_task_ws/src/fr_task_planner/config/keypose_v1_six_face_trajectory.yaml")
+    traj = LaunchConfiguration("trajectory").perform(context)
+    trajectory_speed_scale = float(
+        LaunchConfiguration("trajectory_speed_scale").perform(context)
+    )
     return [
         LogInfo(
             msg=[
                 "KEYPOSE_V1 executor. execute is false unless you pass execute:=true ",
-                "after checking RViz. speed_scale=0.2. Old DUAL-7 files are not used.",
+                "after checking RViz. Set trajectory_speed_scale:=0.4 (or 0.5) "
+                "to override the default 0.2. Old DUAL-7 files are not used.",
             ]
         ),
         Node(
@@ -29,9 +33,10 @@ def _setup(context, *args, **kwargs):
                 {
                     "execute": execute,
                     "task_mode": "keypose_v1",
-                    "trajectory_speed_scale": 0.2,
-                    "grasp_post_close_wait_sec": 2.0,
-                    "handover_post_close_wait_sec": 2.0,
+                    "trajectory_speed_scale": trajectory_speed_scale,
+                    "grasp_post_close_wait_sec": 1.5,
+                    "handover_post_close_wait_sec": 1.5,
+                    "place_post_open_wait_sec": 1.5,
                     "auto_handover_release": LaunchConfiguration("auto_handover_release").perform(context).lower() ==
                         "true",
                     "keypose_v1_trajectory": traj,
@@ -54,6 +59,14 @@ def generate_launch_description():
             DeclareLaunchArgument("real_robot_confirmation", default_value=""),
             DeclareLaunchArgument("empty_gripper_confirmation", default_value=""),
             DeclareLaunchArgument("auto_handover_release", default_value="false"),
+            DeclareLaunchArgument("trajectory_speed_scale", default_value="0.2"),
+            DeclareLaunchArgument(
+                "trajectory",
+                default_value=os.path.expanduser(
+                    "~/fr_task_ws/src/fr_task_planner/config/keypose_optimization_v1/"
+                    "keypose_v1_six_face_with_place_candidate.yaml"
+                ),
+            ),
             OpaqueFunction(function=_setup),
         ]
     )
