@@ -1,0 +1,8 @@
+result: PASS
+source_frozen_unchanged: true
+face6_to_pre_place: {status: PASS, points: 128, method: moveit_collision_checked_joint_connection}
+pre_place_to_place: {status: PASS, points: 21, direction_world: [0, 0, -0.100]}
+gripper_open_b_place: {status: PASS, attached_to_world_transition: true}
+place_to_retreat: {status: PASS, points: 21, direction_world: [0, 0, 0.100]}
+object_center_final: [-0.450000000776, 0.399999997171, 0.767499997974]
+object_bottom_z: 0.750

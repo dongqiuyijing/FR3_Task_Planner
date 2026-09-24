@@ -19,7 +19,7 @@ struct KeyposeExitGate
 
 inline void applyKeyposeCloseEffort(int& velocity, int& force)
 {
-  velocity = 50;
+  velocity = 80;
   force = 50;
 }
 

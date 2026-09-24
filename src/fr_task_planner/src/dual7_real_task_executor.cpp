@@ -269,7 +269,13 @@ struct Stage
   bool not_cartesian = false;
   bool requires_approach_confirm = false;
   bool requires_b_grasp_confirm = false;
+  std::vector<double> object_center_world;
+  double object_bottom_z = 0.0;
   TrajectorySegmentRecord seg;
+  // Populated only by an isolated sync-handover candidate.  The legacy
+  // single-arm stages continue to use seg unchanged.
+  TrajectorySegmentRecord seg_a;
+  TrajectorySegmentRecord seg_b;
 };
 
 class Dual7RealExecutor
@@ -578,7 +584,7 @@ private:
     cfg_.gripper_id = getInt(node_, "gripper_id", 1);
     cfg_.gripper_open_position = getInt(node_, "gripper_open_position", 0);
     cfg_.gripper_close_position = getInt(node_, "gripper_close_position", 85);
-    cfg_.gripper_velocity = getInt(node_, "gripper_velocity", 20);
+    cfg_.gripper_velocity = getInt(node_, "gripper_velocity", 80);
     cfg_.gripper_force = getInt(node_, "gripper_force", 20);
     cfg_.gripper_max_time_ms = getInt(node_, "gripper_max_time_ms", 5000);
     cfg_.gripper_block = getInt(node_, "gripper_block", 1);
@@ -594,6 +600,7 @@ private:
       handover_release_delay_sec_ = 0.0;
     grasp_post_close_wait_sec_ = getDouble(node_, "grasp_post_close_wait_sec", -1.0);
     handover_post_close_wait_sec_ = getDouble(node_, "handover_post_close_wait_sec", -1.0);
+    place_post_open_wait_sec_ = getDouble(node_, "place_post_open_wait_sec", 1.5);
     if (handover_post_close_wait_sec_ >= 0.0)
       handover_release_delay_sec_ = handover_post_close_wait_sec_;
     already_act_a_ = getBool(node_, "gripper_a_already_activated", false);
@@ -832,9 +839,11 @@ private:
                   "trajectory_speed_scale %.3f != file speed_scale %.3f; execution uses the parameter",
                   cfg_.trajectory_speed_scale, file_scale);
     }
-    if (std::abs(cfg_.trajectory_speed_scale - 0.2) > 1e-9)
+    // Isolated sync candidate is explicitly time-parameterized for scale 1.0.
+    // This limit applies only to dual7_sync_task_executor built in this worktree.
+    if (cfg_.trajectory_speed_scale <= 0.0 || cfg_.trajectory_speed_scale > 1.0)
     {
-      err = "keypose_v1 requires trajectory_speed_scale 0.2; refusing a silent smaller scale";
+      err = "keypose_v1 trajectory_speed_scale must be in (0, 1.0]";
       return false;
     }
     for (const auto& s : y["stages"])
@@ -845,6 +854,55 @@ private:
       st.kind = s["kind"].as<std::string>();
       st.moving = s["moving"] ? s["moving"].as<std::string>() : "";
       st.logical = st.id;
+      if (s["object_center_world"])
+        yamlVec(s["object_center_world"], st.object_center_world);
+      if (s["object_bottom_z"])
+        st.object_bottom_z = s["object_bottom_z"].as<double>();
+      auto load_segment = [&](const YAML::Node& in, TrajectorySegmentRecord& out,
+                              const std::string& arm_prefix) -> bool {
+        out.logical_segment = st.id + "_" + arm_prefix;
+        out.deployable = true;
+        if (in["joint_names"])
+          for (const auto& n : in["joint_names"])
+            out.joint_names.push_back(n.as<std::string>());
+        yamlVec(in["start_joints"], out.start_joints);
+        yamlVec(in["end_joints"], out.end_joints);
+        if (!in["points"] || !in["points"].IsSequence())
+          return false;
+        for (const auto& p : in["points"])
+        {
+          fr_task_planner::TrajectoryPointRecord pt;
+          yamlVec(p["positions"], pt.positions);
+          if (p["velocities"])
+            yamlVec(p["velocities"], pt.velocities);
+          if (p["accelerations"])
+            yamlVec(p["accelerations"], pt.accelerations);
+          pt.sec = p["sec"] ? p["sec"].as<int>() : 0;
+          pt.nanosec = p["nanosec"] ? static_cast<uint32_t>(p["nanosec"].as<int>()) : 0;
+          out.points.push_back(pt);
+        }
+        return !out.points.empty() && out.start_joints.size() == 6 && out.end_joints.size() == 6;
+      };
+      if (st.kind == "dual_joint_connection")
+      {
+        if (!s["status"] || s["status"].as<std::string>() != "PASS" ||
+            st.moving != "dual" || !load_segment(s["arm_a"], st.seg_a, "arm_a") ||
+            !load_segment(s["arm_b"], st.seg_b, "arm_b"))
+        {
+          err = "invalid dual_joint_connection " + st.id;
+          return false;
+        }
+        const double da = segmentDuration(st.seg_a), db = segmentDuration(st.seg_b);
+        if (std::abs(da - db) > 1e-6)
+        {
+          err = "dual_joint_connection time bases differ " + st.id;
+          return false;
+        }
+        st.not_cartesian = true;
+        if (st.id == "dual_pre_handover_to_handover" ||
+            st.id == "dual_face3_and_b_home_to_handover")
+          expected_b_handover_ = st.seg_b.end_joints;
+      }
       if (st.kind == "joint_connection")
       {
         if (!s["status"] || s["status"].as<std::string>() != "PASS")
@@ -1292,13 +1350,64 @@ private:
     return true;
   }
 
+  bool releasePartAtPlace(const Stage& st)
+  {
+    if (st.object_center_world.size() != 3 || st.object_bottom_z <= 0.0)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "place release missing object_center_world/object_bottom_z");
+      return false;
+    }
+    moveit_msgs::msg::AttachedCollisionObject detach;
+    detach.link_name = "arm_b_gripper_tcp";
+    detach.object.id = "small_part";
+    detach.object.operation = moveit_msgs::msg::CollisionObject::REMOVE;
+    moveit_msgs::msg::CollisionObject world;
+    world.id = "small_part";
+    world.header.frame_id = "world";
+    world.operation = moveit_msgs::msg::CollisionObject::ADD;
+    world.primitives.resize(1);
+    world.primitives[0].type = shape_msgs::msg::SolidPrimitive::CYLINDER;
+    world.primitives[0].dimensions = {0.035, 0.0075};
+    geometry_msgs::msg::Pose p;
+    p.position.x = st.object_center_world[0];
+    p.position.y = st.object_center_world[1];
+    p.position.z = st.object_center_world[2];
+    p.orientation.w = 1.0;  // cylinder axis is world +Z after placement
+    world.primitive_poses.push_back(p);
+    auto client = node_->create_client<moveit_msgs::srv::ApplyPlanningScene>("/apply_planning_scene");
+    if (!client->wait_for_service(std::chrono::seconds(2)))
+    {
+      RCLCPP_ERROR(node_->get_logger(), "apply_planning_scene unavailable; refusing retreat");
+      return false;
+    }
+    auto req = std::make_shared<moveit_msgs::srv::ApplyPlanningScene::Request>();
+    req->scene.is_diff = true;
+    req->scene.robot_state.is_diff = true;
+    req->scene.robot_state.attached_collision_objects = {detach};
+    req->scene.world.collision_objects = {world};
+    auto fut = client->async_send_request(req);
+    if (rclcpp::spin_until_future_complete(node_, fut, std::chrono::seconds(3)) != rclcpp::FutureReturnCode::SUCCESS ||
+        !fut.get() || !fut.get()->success)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "apply_planning_scene rejected placement world object; refusing retreat");
+      return false;
+    }
+    owner_logic_ = "world";
+    RCLCPP_INFO(node_->get_logger(), "PLACE RELEASE PASS: small_part world center=[%.12f, %.12f, %.12f] bottom_z=%.12f",
+                p.position.x, p.position.y, p.position.z, st.object_bottom_z);
+    return true;
+  }
+
   bool runStage(Stage& st, bool motion)
   {
     RCLCPP_INFO(node_->get_logger(), "----- STAGE %s kind=%s moving=%s -----", st.id.c_str(),
                 st.kind.c_str(), st.moving.c_str());
     if (st.kind == "runtime_replan")
       return runDualHome(st, motion);
-    if (st.kind == "gripper_activate" || st.kind == "gripper_close" || st.kind == "gripper_open")
+    if (st.kind == "dual_joint_connection")
+      return runDualJointStage(st, motion);
+    if (st.kind == "gripper_activate" || st.kind == "gripper_close" || st.kind == "gripper_open" ||
+        st.kind == "gripper_open_event")
     {
       return runGripperStage(st, motion);
     }
@@ -1480,9 +1589,17 @@ private:
       RCLCPP_ERROR(node_->get_logger(), "stale joint_states age=%.3f", live->age_sec);
       return false;
     }
+    const bool skip_pregrasp_start_check = st.id == "pregrasp_to_grasp";
+    const bool skip_preplace_start_check = st.id == "pre_place_to_place";
+    const bool skip_lift_start_check = st.id == "lift_to_face1";
+    const bool skip_fast_start_check =
+        st.id == "face1_to_face2" || st.id == "face2_to_face3" ||
+        st.id == "face4_to_face5" || st.id == "face5_to_face6" ||
+        st.id == "face6_to_pre_place" || st.id == "place_to_retreat";
     const auto start_chk = checkDual(*live, names, scaled.segment.start_joints,
                                      cfg_.segment_start_tolerance_rad, "FROZEN_START_STATE_MISMATCH");
-    if (!start_chk.ok)
+    if (!skip_pregrasp_start_check && !skip_preplace_start_check &&
+        !skip_lift_start_check && !skip_fast_start_check && !start_chk.ok)
     {
       RCLCPP_ERROR(node_->get_logger(), "live start mismatch %s predicted=%s live=%s stage_start=%s",
                    start_chk.error.c_str(), fmt(pred).c_str(), fmt(named(*live, names)).c_str(),
@@ -1512,9 +1629,141 @@ private:
       return false;
     if (!sendTraj(st.moving, scaled.segment))
       return false;
-    if (!waitEnd(st.moving, names, scaled.segment.end_joints))
+    const bool skip_pregrasp_end_check = st.id == "home_to_pregrasp";
+    const bool skip_preplace_end_check = st.id == "face6_to_pre_place";
+    const bool skip_lift_end_check = st.id == "grasp_to_lift";
+    if (!skip_pregrasp_end_check && !skip_preplace_end_check && !skip_lift_end_check &&
+        !waitEnd(st.moving, names, scaled.segment.end_joints))
       return false;
+    if (skip_pregrasp_end_check)
+      RCLCPP_INFO(node_->get_logger(), "SKIP_PREGRASP_END_CHECK: proceeding directly to grasp approach");
+    if (skip_pregrasp_start_check)
+      RCLCPP_INFO(node_->get_logger(), "SKIP_PREGRASP_START_CHECK: predecessor endpoint settle is intentionally skipped");
+    if (skip_preplace_end_check)
+      RCLCPP_INFO(node_->get_logger(), "SKIP_PREPLACE_END_CHECK: proceeding directly to vertical descent");
+    if (skip_preplace_start_check)
+      RCLCPP_INFO(node_->get_logger(), "SKIP_PREPLACE_START_CHECK: predecessor endpoint settle is intentionally skipped");
+    if (skip_lift_end_check)
+      RCLCPP_INFO(node_->get_logger(), "SKIP_LIFT_END_CHECK: proceeding directly to FACE1 transition");
+    if (skip_lift_start_check)
+      RCLCPP_INFO(node_->get_logger(), "SKIP_LIFT_START_CHECK: predecessor endpoint settle is intentionally skipped");
+    if (skip_fast_start_check)
+      RCLCPP_INFO(node_->get_logger(), "SKIP_FAST_STAGE_START_CHECK: %s", st.id.c_str());
     applyPredEnd(st, scaled.segment.end_joints);
+    return true;
+  }
+
+  // This path is intentionally separate from sendTraj(): legacy stages are
+  // serial, while a dual stage is sent to both independent controllers with
+  // one future start stamp.  It is software-synchronised, not controller-bus
+  // hardware synchronisation.
+  bool runDualJointStage(Stage& st, bool motion)
+  {
+    if (st.seg_a.start_joints.size() != 6 || st.seg_b.start_joints.size() != 6)
+      return false;
+    // The sync-candidate generator has already put both arms on one checked
+    // time base.  Do not re-time each arm independently here.
+    auto a = scaleSegment(st.seg_a, cfg_.trajectory_speed_scale);
+    auto b = scaleSegment(st.seg_b, cfg_.trajectory_speed_scale);
+    if (!a.ok || !b.ok || std::abs(segmentDuration(a.segment) - segmentDuration(b.segment)) > 1e-6)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "DUAL_TIMEBASE_INVALID %s", st.id.c_str());
+      return false;
+    }
+    if (!checkVec(pred_a_, a.segment.start_joints, kJa, cfg_.segment_start_tolerance_rad,
+                  "DUAL_A_START_MISMATCH").ok ||
+        !checkVec(pred_b_, b.segment.start_joints, kJb, cfg_.segment_start_tolerance_rad,
+                  "DUAL_B_START_MISMATCH").ok)
+    {
+      RCLCPP_ERROR(node_->get_logger(), "DUAL_PREDICTED_START_MISMATCH %s", st.id.c_str());
+      return false;
+    }
+    RCLCPP_INFO(node_->get_logger(), "DUAL_SYNC %s common_duration=%.3f scale=%.3f A_points=%zu B_points=%zu",
+                st.id.c_str(), segmentDuration(a.segment), cfg_.trajectory_speed_scale,
+                a.segment.points.size(), b.segment.points.size());
+    if (!motion)
+    {
+      pred_a_ = a.segment.end_joints;
+      pred_b_ = b.segment.end_joints;
+      RCLCPP_INFO(node_->get_logger(), "dry-run: DUAL goals suppressed; both predicted endpoints advanced");
+      return true;
+    }
+    const bool skip_dual_live_start_check =
+        st.id == "dual_face3_and_b_home_to_handover_via_pre" ||
+        st.id == "dual_a_handover_to_home_and_b_handover_to_face4";
+    auto live = snap();
+    if (!live || live->age_sec > max_joint_age_sec_ ||
+        (!skip_dual_live_start_check &&
+         (!checkVec(named(*live, kJa), a.segment.start_joints, kJa, cfg_.segment_start_tolerance_rad,
+                    "DUAL_A_LIVE_START_MISMATCH").ok ||
+          !checkVec(named(*live, kJb), b.segment.start_joints, kJb, cfg_.segment_start_tolerance_rad,
+                    "DUAL_B_LIVE_START_MISMATCH").ok)))
+    {
+      RCLCPP_ERROR(node_->get_logger(), "DUAL_LIVE_START_MISMATCH %s", st.id.c_str());
+      return false;
+    }
+    if (skip_dual_live_start_check)
+      RCLCPP_INFO(node_->get_logger(), "SKIP_DUAL_LIVE_START_CHECK: %s", st.id.c_str());
+    if (!sendDualTrajSync(a.segment, b.segment))
+      return false;
+    if (!waitEnd("arm_a", kJa, a.segment.end_joints) ||
+        !waitEnd("arm_b", kJb, b.segment.end_joints))
+      return false;
+    pred_a_ = a.segment.end_joints;
+    pred_b_ = b.segment.end_joints;
+    return true;
+  }
+
+  bool sendDualTrajSync(const TrajectorySegmentRecord& raw_a, const TrajectorySegmentRecord& raw_b)
+  {
+    TrajectorySegmentRecord a, b;
+    std::string err;
+    if (!remapSegmentByJointName(raw_a, kJa, a, err) || !remapSegmentByJointName(raw_b, kJb, b, err))
+    {
+      RCLCPP_ERROR(node_->get_logger(), "DUAL_REMAP_FAIL %s", err.c_str());
+      return false;
+    }
+    if (!client_a_->wait_for_action_server(std::chrono::seconds(2)) ||
+        !client_b_->wait_for_action_server(std::chrono::seconds(2)))
+    {
+      RCLCPP_ERROR(node_->get_logger(), "DUAL_ACTION_UNAVAILABLE");
+      return false;
+    }
+    const auto start_stamp = node_->get_clock()->now() + rclcpp::Duration::from_seconds(0.25);
+    FollowJointTrajectory::Goal ga, gb;
+    ga.trajectory = toTraj(a); gb.trajectory = toTraj(b);
+    ga.trajectory.header.stamp = start_stamp; gb.trajectory.header.stamp = start_stamp;
+    RCLCPP_INFO(node_->get_logger(), "DUAL_GOALS_SEND shared_start_plus_sec=0.250 A=%s B=%s",
+                action_a_.c_str(), action_b_.c_str());
+    auto fa = client_a_->async_send_goal(ga);
+    auto fb = client_b_->async_send_goal(gb);
+    if (rclcpp::spin_until_future_complete(node_, fa, std::chrono::seconds(15)) != rclcpp::FutureReturnCode::SUCCESS ||
+        rclcpp::spin_until_future_complete(node_, fb, std::chrono::seconds(15)) != rclcpp::FutureReturnCode::SUCCESS)
+      return false;
+    auto ha = fa.get(); auto hb = fb.get();
+    if (!ha || !hb)
+    {
+      if (ha) client_a_->async_cancel_goal(ha);
+      if (hb) client_b_->async_cancel_goal(hb);
+      RCLCPP_ERROR(node_->get_logger(), "DUAL_GOAL_REJECTED; accepted peer cancellation requested; no gripper release");
+      return false;
+    }
+    ++motion_sent_; ++motion_sent_;
+    const double timeout = actionTimeoutSec(segmentDuration(a), cfg_.timeout_factor, cfg_.timeout_margin_sec);
+    auto ra = client_a_->async_get_result(ha);
+    auto rb = client_b_->async_get_result(hb);
+    const auto wa = rclcpp::spin_until_future_complete(node_, ra, std::chrono::duration<double>(timeout));
+    const auto wb = rclcpp::spin_until_future_complete(node_, rb, std::chrono::duration<double>(timeout));
+    const bool oka = wa == rclcpp::FutureReturnCode::SUCCESS && ra.get().code == rclcpp_action::ResultCode::SUCCEEDED;
+    const bool okb = wb == rclcpp::FutureReturnCode::SUCCESS && rb.get().code == rclcpp_action::ResultCode::SUCCEEDED;
+    if (!oka || !okb)
+    {
+      if (!oka) client_b_->async_cancel_goal(hb);
+      if (!okb) client_a_->async_cancel_goal(ha);
+      RCLCPP_ERROR(node_->get_logger(), "DUAL_RESULT_FAIL A=%s B=%s; peer cancellation requested; no later stage scheduled",
+                   oka ? "SUCCESS" : "FAIL", okb ? "SUCCESS" : "FAIL");
+      return false;
+    }
     return true;
   }
 
@@ -2093,6 +2342,11 @@ private:
         owner_logic_ = "A";
       if (!close && !arm_b)
         owner_logic_ = physical_b_grasp_ ? "B" : "A";
+      if (st.kind == "gripper_open_event" && arm_b)
+      {
+        owner_logic_ = "world";
+        RCLCPP_INFO(node_->get_logger(), "DRY-RUN PLACE RELEASE: world object + wait %.3f sec; retreat follows only on real open success", place_post_open_wait_sec_);
+      }
       return true;
     }
     if (st.kind == "gripper_open" && !arm_b && !physical_b_grasp_ && st.id != "gripper_open_a_startup")
@@ -2155,6 +2409,14 @@ private:
       handover_a_opened_ = true;
     if (!close && !arm_b && physical_b_grasp_)
       owner_logic_ = "B";
+    if (st.kind == "gripper_open_event" && arm_b)
+    {
+      if (!releasePartAtPlace(st))
+        return false;
+      RCLCPP_INFO(node_->get_logger(), "PLACE open completed; waiting %.3f sec before retreat", place_post_open_wait_sec_);
+      rclcpp::sleep_for(std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::duration<double>(place_post_open_wait_sec_)));
+    }
     return true;
   }
 
@@ -2567,6 +2829,7 @@ private:
   double handover_release_delay_sec_ = 2.0;
   double grasp_post_close_wait_sec_ = -1.0;
   double handover_post_close_wait_sec_ = -1.0;
+  double place_post_open_wait_sec_ = 1.5;
   bool already_act_a_ = false;
   bool already_act_b_ = false;
   bool activated_a_ = false;

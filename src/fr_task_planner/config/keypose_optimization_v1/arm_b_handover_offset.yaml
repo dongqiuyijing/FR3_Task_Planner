@@ -1,0 +1,35 @@
+# KEYPOSE_V1 Arm B handover manual compensation.
+# Translation is applied in the world frame to the original B_HANDOVER TCP.
+# Orientation is unchanged. Arm A, URDF, TCP calibration, and face keyposes are not modified.
+# This file is planning-only. It does not command the real robot.
+
+task_version: KEYPOSE_V1
+execution: false
+frame: world
+units: m
+apply_to: B_HANDOVER
+apply_in_arm_b_local_frame: false
+
+arm_b_handover_offset_world:
+  x: 0.0
+  y: -0.006
+  z: -0.010
+
+frozen_trajectory: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_v1_six_face_trajectory.yaml
+output_report: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_optimization_v1/b_handover_offset_report.yaml
+output_preview: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_optimization_v1/b_handover_offset_preview.yaml
+output_trajectory_candidate: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_v1_six_face_trajectory_b_handover_offset.yaml
+overwrite_frozen_trajectory: false
+# Explicit promotion is allowed only after this program completes every FK/IK,
+# dual-pose, and affected-connection check. It replaces only the two B segments.
+# Set true only for a one-time, validated promotion; keep false afterwards so
+# future offline checks cannot stack this offset onto the already-promoted pose.
+promote_candidate_to_frozen: false
+
+fk_pos_tol_m: 0.0005
+fk_ori_tol_deg: 0.5
+offset_pos_tol_m: 0.0005
+offset_ori_tol_deg: 0.5
+ik_timeout_s: 0.25
+ik_nearby_attempts: 48
+ik_nearby_radius_rad: 0.35

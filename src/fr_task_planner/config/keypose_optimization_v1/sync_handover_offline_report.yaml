@@ -1,0 +1,7 @@
+result: PENDING_COLLISION_VALIDATOR
+source: /home/cyberbraindualarm/fr_task_sync_ws/src/fr_task_planner/config/keypose_optimization_v1/keypose_v1_six_face_speed_optimized_candidate.yaml
+output: /home/cyberbraindualarm/fr_task_sync_ws/src/fr_task_planner/config/keypose_optimization_v1/keypose_v1_six_face_with_sync_handover_candidate.yaml
+dual_stage_1_duration_sec: 1.0
+b_handover_hold_after_motion_sec: 0.0
+dual_return_face4_duration_sec: 1.0
+unchanged_non_handover_stage_count: 20

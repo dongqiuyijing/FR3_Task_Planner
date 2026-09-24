@@ -718,6 +718,42 @@ ament_target_dependencies(
   moveit_ros_planning_interface
 )
 add_executable(
+  keypose_v1_b_handover_offset
+  src/keypose_v1_b_handover_offset.cpp
+)
+add_executable(keypose_v1_b_place_candidate src/keypose_v1_b_place_candidate.cpp)
+target_link_libraries(keypose_v1_b_place_candidate yaml-cpp)
+ament_target_dependencies(keypose_v1_b_place_candidate rclcpp geometry_msgs moveit_core moveit_msgs moveit_ros_planning_interface)
+target_link_libraries(
+  keypose_v1_b_handover_offset
+  yaml-cpp
+)
+add_executable(
+  keypose_v1_b_handover_live_test
+  src/keypose_v1_b_handover_live_test.cpp
+)
+target_include_directories(keypose_v1_b_handover_live_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+target_link_libraries(keypose_v1_b_handover_live_test fr_task_planner_trajectory yaml-cpp)
+ament_target_dependencies(
+  keypose_v1_b_handover_live_test
+  rclcpp
+  rclcpp_action
+  sensor_msgs
+  trajectory_msgs
+  control_msgs
+  std_srvs
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+ament_target_dependencies(
+  keypose_v1_b_handover_offset
+  rclcpp
+  geometry_msgs
+  moveit_core
+  moveit_msgs
+  moveit_ros_planning_interface
+)
+add_executable(
   keypose_v1_sequence_check
   src/keypose_v1_sequence_check.cpp
 )
@@ -799,6 +835,26 @@ ament_target_dependencies(dual7_real_task_executor
   std_srvs
 )
 
+# Isolated development executable.  It is installed under a different name
+# and is only selected by keypose_v1_sync_executor.launch.py.
+add_executable(dual7_sync_task_executor
+  src/dual7_real_task_executor.cpp
+)
+target_include_directories(dual7_sync_task_executor PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(dual7_sync_task_executor
+  fr_task_planner_trajectory
+  yaml-cpp
+)
+ament_target_dependencies(dual7_sync_task_executor
+  rclcpp rclcpp_action sensor_msgs trajectory_msgs control_msgs moveit_msgs fairino_msgs std_srvs
+)
+
+add_executable(keypose_v1_sync_handover_validate src/keypose_v1_sync_handover_validate.cpp)
+target_link_libraries(keypose_v1_sync_handover_validate yaml-cpp)
+ament_target_dependencies(keypose_v1_sync_handover_validate rclcpp moveit_core moveit_msgs moveit_ros_planning_interface)
+
 install(TARGETS
   fr3_mtc_smoke_test
   fr3_mtc_pregrasp_test
@@ -833,12 +889,17 @@ install(TARGETS
   dual_arm_b_joint_motion_optimization_test
   dual_complete_six_face_task_test
   dual7_real_task_executor
+  dual7_sync_task_executor
+  keypose_v1_sync_handover_validate
   dual8_current_to_home_test
   keypose_candidate_search
   keypose_b_face_diag
   keypose_b_face_mirror_search
   keypose_b_face4_solve
   keypose_v1_connect
+  keypose_v1_b_handover_offset
+  keypose_v1_b_place_candidate
+  keypose_v1_b_handover_live_test
   keypose_v1_b_home
   keypose_v1_sequence_check
   DESTINATION lib/${PROJECT_NAME}
@@ -855,6 +916,8 @@ install(PROGRAMS
   scripts/keypose_v1_tour_preview.py
   scripts/keypose_v1_a_return_preview.py
   scripts/keypose_v1_b_home_preview.py
+  scripts/keypose_v1_b_handover_offset_preview.py
+  scripts/keypose_v1_b_place_geometry_preview.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

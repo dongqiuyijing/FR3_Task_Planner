@@ -94,6 +94,9 @@ class Dual7Preview(Node):
 
     def _flatten(self):
         frames = []
+        cur_a = list(self.data.get("home_a") or [0.0] * 6)
+        cur_b = list(self.data.get("home_b") or [0.0] * 6)
+        owner = "none"
         for p in self.phases:
             wps = p.get("waypoints") or []
             moving = p.get("moving") or "arm_a"
@@ -111,6 +114,50 @@ class Dual7Preview(Node):
             q = last.get("joints") if isinstance(last, dict) else last
             for _ in range(hold):
                 frames.append((p, q, moving, sa, sb, ea, eb))
+        # Frozen KEYPOSE trajectories use `stages` and trajectory `points`,
+        # rather than the older DUAL-7 `phases` / `waypoints` schema.
+        for stage in self.data.get("stages") or []:
+            p = dict(stage)
+            sid = str(p.get("id", ""))
+            moving = str(p.get("moving", ""))
+            if sid == "gripper_close_a":
+                owner = "A"
+            elif sid in ("attachment_transfer", "gripper_close_b"):
+                owner = "B"
+            elif sid == "gripper_open_b_place":
+                owner = "world"
+            p["owner"] = owner
+            p["name"] = sid
+            p["face"] = sid
+            p["object_xyz"] = p.get("object_center_world") or [-0.45, 0.4, 0.7675]
+            p["q_a"] = 0.0
+            p["q_b"] = 0.0 if owner == "world" else 0.083
+            sa, sb = list(cur_a), list(cur_b)
+            if moving == "dual":
+                pa = [x.get("positions") for x in (p.get("arm_a", {}).get("points") or [])]
+                pb = [x.get("positions") for x in (p.get("arm_b", {}).get("points") or [])]
+                if not pa or not pb:
+                    continue
+                # The executor shares one time base but the two controllers
+                # may have different point densities.  Sample both paths on
+                # a common visual index so RViz visibly moves both arms.
+                n = max(len(pa), len(pb))
+                for i in range(n):
+                    ia = round(i * (len(pa) - 1) / max(1, n - 1))
+                    ib = round(i * (len(pb) - 1) / max(1, n - 1))
+                    frames.append((p, {"a": pa[ia], "b": pb[ib]}, moving, sa, sb, pa[-1], pb[-1]))
+                cur_a, cur_b = list(pa[-1]), list(pb[-1])
+                continue
+            raw = p.get("points") or []
+            wps = [x.get("positions") if isinstance(x, dict) else x for x in raw]
+            if not wps:
+                wps = [list(cur_a if moving == "arm_a" else cur_b)]
+            for q in wps:
+                frames.append((p, q, moving, sa, sb, sa, sb))
+            if moving == "arm_a":
+                cur_a = list(wps[-1])
+            elif moving == "arm_b":
+                cur_b = list(wps[-1])
         return frames
 
     def _js(self, a, b, qa, qb):
@@ -151,6 +198,8 @@ class Dual7Preview(Node):
             a, b = list(q), list(sb)
         elif moving == "arm_b":
             a, b = list(sa), list(q)
+        elif moving == "dual":
+            a, b = list(q["a"]), list(q["b"])
         else:
             a, b = list(ea), list(eb)
         st = DisplayRobotState()

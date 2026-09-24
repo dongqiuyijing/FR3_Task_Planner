@@ -1,5 +1,11 @@
-task_version: KEYPOSE_V1_SIX_FACE
+task_version: KEYPOSE_V1_SIX_FACE_B_HANDOVER_OFFSET_CANDIDATE
 execution: false
+frozen_source_untouched: true
+source_frozen: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_v1_six_face_trajectory.yaml
+arm_b_handover_offset_world: [0.000000000000, -0.006000000000, -0.010000000000]
+offset_frame: world
+new_B_HANDOVER_joints: [1.044598836525, -0.840489042245, 1.758012695430, -2.488323653321, -1.570792654675, -0.526200288214]
+chain_offset: PASS
 baseline_overwritten: false
 keypose_dir: /home/cyberbraindualarm/fr_task_ws/src/fr_task_planner/config/keypose_optimization_v1
 selected_candidate: 1

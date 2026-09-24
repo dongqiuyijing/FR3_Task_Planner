@@ -1,0 +1,37 @@
+# Evidence collected by the offline RobotModel diagnostic on 2026-09-23.
+result: CONTRADICTION_RESOLVED_NO_PRIOR_IK_SOLUTION
+current_model:
+  robot: fairino3_dual_robot
+  planning_frame: world
+  planning_group: arm_b
+  ik_tip_link: arm_b_gripper_tcp
+  group_chain:
+    - arm_b_shoulder_link
+    - arm_b_upperarm_link
+    - arm_b_forearm_link
+    - arm_b_wrist1_link
+    - arm_b_wrist2_link
+    - arm_b_wrist3_link
+    - arm_b_gripper_base_link
+    - arm_b_gripper_tcp
+face6_frozen_joint_state_rad: [0.770844845313, 0.113265160868, 0.345799789486, -0.459077791224, -2.370747973237, -2.356207583198]
+face6_tcp_fk_world:
+  xyz: [-0.00000230082, 0.318024, 1.18197]
+  xyzw: [0.382683, -0.000000234848, 0.000000571958, 0.923880]
+face6_fk_to_ik_round_trip: PASS
+requested_pre_place_tcp_world:
+  xyz: [-0.350, 0.400, 0.8595]
+  xyzw: [1.0, 0.0, 0.0, 0.0]
+requested_place_tcp_world:
+  xyz: [-0.350, 0.400, 0.7595]
+  xyzw: [1.0, 0.0, 0.0, 0.0]
+current_pre_place_ik_from_face6_seed: FAIL
+prior_files:
+  b_place_geometry_report: "IK/FK/path explicitly NOT_RUN; no joints stored"
+  b_place_trajectory_candidate: "FAIL; requested/final object Y is 0.500, not 0.400"
+  b_place_face6_to_pre_candidate: ABSENT
+conclusion: >-
+  No local artifact proves a prior IK success for the current complete target.
+  The old geometry calculation used the intended TCP location but did not call IK;
+  the old trajectory draft used the wrong object Y and is marked FAIL. Therefore
+  no old joint solution exists to compare or use as a seed.

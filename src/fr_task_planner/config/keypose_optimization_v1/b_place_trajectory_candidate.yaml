@@ -1,0 +1,6 @@
+task_version: KEYPOSE_V1_B_PLACE
+execution: false
+source_frozen_unchanged: true
+frame: world
+object_center_final: [-0.350000000000, 0.500000000000, 0.767500000000]
+bottom_z_final: 0.750000000000

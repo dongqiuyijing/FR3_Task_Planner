@@ -1,0 +1,45 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Enabled: true
+      Name: Grid
+    - Class: moveit_rviz_plugin/RobotState
+      Enabled: true
+      Name: Offset B_HANDOVER (green)
+      Robot Description: robot_description
+      Robot State Topic: /keypose/preview/robot_state
+    - Class: moveit_rviz_plugin/RobotState
+      Enabled: true
+      Name: Frozen B_HANDOVER (orange)
+      Robot Description: robot_description
+      Robot State Topic: /keypose/preview/robot_state_pre
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: TCP markers
+      Topic: /keypose/preview/markers
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: world
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+  Transformation:
+    Current:
+      Class: rviz_default_plugins/TF
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Distance: 2.4
+      Focal Point:
+        X: -0.2
+        Y: 0.45
+        Z: 0.85
+      Pitch: 0.6
+      Yaw: 2.4
