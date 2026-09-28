@@ -1,0 +1,65 @@
+# Only the FR3 GUI / joystick reference sources are tracked.
+# Everything else in this old workspace stays on disk and stays out of Git.
+
+*
+!*/
+
+!.gitignore
+
+# Catkin workspace marker
+!src/CMakeLists.txt
+
+# ROS package
+!src/app_pkg/package.xml
+!src/app_pkg/CMakeLists.txt
+!src/app_pkg/action/
+!src/app_pkg/action/**
+
+# Application source
+!src/app_pkg/scripts/
+!src/app_pkg/scripts/**/*.py
+
+# Launch and desktop deploy
+!src/app_pkg/launch/
+!src/app_pkg/launch/**
+!src/app_pkg/deploy/
+!src/app_pkg/deploy/**
+
+# Config the source actually reads
+!src/app_pkg/config/
+!src/app_pkg/config/start.jpg
+!src/app_pkg/config/camera_rvc/
+!src/app_pkg/config/camera_rvc/hand_eye.txt
+!src/app_pkg/config/camera_rvc/rvc_parameter.json
+!src/app_pkg/config/camera_rvc/rvc_IntrinsicParameters.yaml
+!src/app_pkg/config/rviz/
+!src/app_pkg/config/rviz/nid.rviz
+
+# Fairino SDK text sources used by FR_SDK.py and the StartJOG examples
+!src/app_pkg/fairino-python-sdk-master/
+!src/app_pkg/fairino-python-sdk-master/README.md
+!src/app_pkg/fairino-python-sdk-master/LICENSE
+!src/app_pkg/fairino-python-sdk-master/linux/
+!src/app_pkg/fairino-python-sdk-master/linux/fairino/
+!src/app_pkg/fairino-python-sdk-master/linux/fairino/Robot.py
+!src/app_pkg/fairino-python-sdk-master/linux/fairino/setup.py
+!src/app_pkg/fairino-python-sdk-master/linux/fairino/README.txt
+!src/app_pkg/fairino-python-sdk-master/linux/example/
+!src/app_pkg/fairino-python-sdk-master/linux/example/*.py
+
+# Keep generated and vendor binaries ignored even if a broader rule matches
+__pycache__/
+*.py[cod]
+*.log
+*.so
+*.pyd
+*.zip
+Robot.c
+build/
+devel/
+install/
+log/
+vens/
+MvSdkLog/
+.vscode/
+.catkin_workspace

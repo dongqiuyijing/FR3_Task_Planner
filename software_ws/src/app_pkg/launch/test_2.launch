@@ -1,0 +1,7 @@
+<launch>
+       <!-- 参数化虚拟环境路径 -->
+    <node name="michensen2" pkg="app_pkg" type="michensen2.py" output="screen"/> 
+    <node name="data_save1" pkg="app_pkg" type="data_save1.py" output="screen"/> 
+    <node name="node_image_1_3" pkg="app_pkg" type="node_image_1_3.py" output="screen"/> 
+    <node name="node_image_3_5" pkg="app_pkg" type="node_image_3_3.py" output="screen"/>
+</launch>

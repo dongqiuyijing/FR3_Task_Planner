@@ -1,0 +1,10 @@
+<launch>
+     <!-- 参数化虚拟环境路径 -->
+    <arg name="venv_path1" default="$(find app_pkg)/vens/venv1" />
+
+    <!-- 节点定义 -->
+    <node name="interface_gui" pkg="app_pkg" type="interface_gui.py" output="screen" launch-prefix="$(arg venv_path1)/bin/python">
+        <!-- 注入环境变量 -->
+        <env name="PYTHONPATH" value="$(arg venv_path1)/lib/python3.8/site-packages:/opt/ros/noetic/lib/python3/dist-packages"/>
+    </node>
+</launch>

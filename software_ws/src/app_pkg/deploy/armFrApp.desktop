@@ -1,0 +1,8 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Software
+Exec=/home/admind/software_ws/src/app_pkg/deploy/start_document.sh
+Icon=/home/admind/software_ws/src/app_pkg/deploy/icons/app_icon.png  # 直接引用项目内图标
+Categories=Utility;
+Terminal=false

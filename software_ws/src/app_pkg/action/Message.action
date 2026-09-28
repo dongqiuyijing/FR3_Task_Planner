@@ -1,0 +1,11 @@
+# 定义目标消息
+string message
+
+---
+# 定义结果消息
+string reply
+
+---
+# 定义反馈消息
+string status
+    

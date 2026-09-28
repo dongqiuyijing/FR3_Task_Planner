@@ -1,0 +1,11 @@
+<launch>
+     <!-- 参数化虚拟环境路径 -->
+    <arg name="venv_path1" default="$(find app_pkg)/vens/venv1" />
+
+    <!-- 节点定义 -->
+    <node name="test_node1" pkg="app_pkg" type="test_python_path.py" output="screen" launch-prefix="$(arg venv_path1)/bin/python3">
+        <!-- 注入环境变量 -->
+        <env name="PYTHONPATH" value="$(arg venv_path1)/lib/python3.8/site-packages"/>
+    </node>
+
+</launch>

@@ -1,0 +1,24 @@
+<launch>
+       <!-- 参数化虚拟环境路径 -->
+    <arg name="venv_path1" default="$(find app_pkg)/vens/venv1" />
+    <arg name="venv_path2" default="$(find app_pkg)/vens/venv2" />
+
+    <!-- 启动虚拟环境下的节点 -->
+    <node name="TaskController" pkg="app_pkg" type="TaskController.py" output="screen" launch-prefix="$(arg venv_path1)/bin/python">
+        <env name="PYTHONPATH" value="$(arg venv_path1)/lib/python3.8/site-packages:/opt/ros/noetic/lib/python3/dist-packages"/>
+    </node>
+    
+    <node name="eye_to_hand" pkg="app_pkg" type="eye_to_hand.py" output="screen" launch-prefix="$(arg venv_path1)/bin/python">
+        <env name="PYTHONPATH" value="$(arg venv_path1)/lib/python3.8/site-packages:/opt/ros/noetic/lib/python3/dist-packages"/>
+    </node>
+
+    <!-- <node name="rvc_aruco_get" pkg="app_pkg" type="rvc_aruco_get.py" output="screen" launch-prefix="$(arg venv_path2)/bin/python">
+        <env name="PYTHONPATH" value="$(arg venv_path2)/lib/python3.8/site-packages:/opt/ros/noetic/lib/python3/dist-packages"/>
+    </node> -->
+    <node name="joy_node" pkg="joy" type="joy_node"/>
+    <node name="joystick_control" pkg="app_pkg" type="joystick_control.py"/>
+    <node name="RVC_camera" pkg="app_pkg" type="RVC_camera.py"/>
+    <node name="rvc_path2" pkg="app_pkg" type="rvc_path_1.py" output="screen"/> 
+    <node name="michensen" pkg="app_pkg" type="michensen.py" output="screen"/> 
+    <node name="data_save" pkg="app_pkg" type="data_save.py" output="screen"/> 
+</launch>

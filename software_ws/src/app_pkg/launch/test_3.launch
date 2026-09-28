@@ -1,0 +1,7 @@
+<launch>
+    <!-- 启动RViz -->
+    <node name="rviz" pkg="rviz" type="rviz" />
+    
+    <!-- 启动Qt界面 -->
+    <node name="test_2" pkg="app_pkg" type="test_2.py" output="screen" />
+</launch>
